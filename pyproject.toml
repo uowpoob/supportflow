@@ -8,16 +8,21 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "deepagents>=0.7.13",
     "fastapi>=0.141.1",
     "langchain>=1.4.0",
     "langchain-deepseek>=1.1.0",
     "langchain-openai>=1.6.2",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
-    "pymysql[rsa]>=1.2.0",
-    "sqlalchemy>=2.0.53",
+    "asyncmy>=0.2.10",
+    "sqlalchemy[asyncio]>=2.0.53",
     "uvicorn>=0.52.4",
+    "alembic>=1.20.0",
+    "jinja2>=3.1.6",
+    "bcrypt>=5.0.0",
+    "itsdangerous>=2.2.0",
+    "python-multipart>=0.0.32",
+    "passlib>=1.7.4",
 ]
 
 [project.scripts]
@@ -26,3 +31,9 @@ supportflow = "supportflow:main"
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

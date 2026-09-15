@@ -40,8 +40,10 @@
 ```
 
 成功时输出数据库名和 `SELECT 1=1`，失败时退出码为 1。
-连接模块位于 `src/supportflow/db/session.py`，提供连接池与 `get_db` 会话依赖；
-业务层负责显式提交事务。当前不创建表，表结构和迁移留到下一步。
+连接模块位于 `src/supportflow/db/session.py`，使用 asyncmy 和 SQLAlchemy 异步连接池，
+提供 `AsyncSession` 类型的 `get_db` 会话依赖；业务层使用 `await session.execute(...)`
+和 `await session.commit()` 执行查询、显式提交事务。并发任务各用独立会话，
+不在等待模型回复或人工审批期间保持数据库事务。应用关闭时释放连接池。
 
 ## 文件的作用
 
