@@ -1,6 +1,38 @@
 import { fetchOrders } from '../api/admin'
-import { StubNotice } from '../components/Async'
+import type { Column } from '../components/DataTable'
 import { ResourceListPage } from '../components/ResourceListPage'
+import { formatCents, formatDateTime } from '../components/value'
+import { FULFILLMENT_STATUS_LABELS, PAYMENT_STATUS_LABELS, labelOf } from '../labels'
+
+/**
+ * 列表列：**显式声明**，不用自动推导。
+ * 推导出来的列会跟着后端字段走 —— 哪天接口多返回一个 `user_id`，
+ * 表头就自己多一列，界面什么时候变的都没人知道。
+ */
+const COLUMNS: Column[] = [
+  { key: 'order_no', label: '订单号' },
+  { key: 'username', label: '归属客户' },
+  {
+    key: 'paid_amount_cents',
+    label: '实付金额',
+    render: (row) => formatCents(row.paid_amount_cents),
+  },
+  {
+    key: 'payment_status',
+    label: '支付状态',
+    render: (row) => labelOf(PAYMENT_STATUS_LABELS, row.payment_status),
+  },
+  {
+    key: 'fulfillment_status',
+    label: '履约状态',
+    render: (row) => labelOf(FULFILLMENT_STATUS_LABELS, row.fulfillment_status),
+  },
+  {
+    key: 'created_at',
+    label: '下单时间',
+    render: (row) => formatDateTime(row.created_at),
+  },
+]
 
 /** 全部订单 —— GET /admin/orders */
 export function AdminOrdersPage() {
@@ -14,15 +46,10 @@ export function AdminOrdersPage() {
         </>
       }
       fetcher={fetchOrders}
+      columns={COLUMNS}
       detailKey="order_no"
       detailTo={(orderNo) => `/admin/orders/${orderNo}`}
-      notice={
-        <StubNotice>
-          ⚠️ 这个接口目前<strong>没有管理员鉴权</strong>，任何人直接 curl
-          都能拿到数据。前端守卫拦不住 curl，必须在后端接口上校验。
-        </StubNotice>
-      }
-      emptyHint="后端 orders 表还没有数据。"
+      emptyHint="orders 表还没有数据，先跑 python -m supportflow.db.seed_orders。"
     />
   )
 }

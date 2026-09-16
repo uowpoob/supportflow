@@ -12,6 +12,7 @@ router = APIRouter(prefix="/customer", tags=["customer"], dependencies=[Depends(
 
 @router.get("/orders")
 async def list_orders(offset: int = 0, limit: int = 10):
+
     """我的订单列表（分页）。"""
     return result.success()
 

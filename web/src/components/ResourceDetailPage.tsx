@@ -19,6 +19,8 @@ export function ResourceDetailPage({
   notice,
   actions,
   extra,
+  omitKeys,
+  renderExtra,
 }: {
   title: string
   desc: ReactNode
@@ -30,6 +32,10 @@ export function ResourceDetailPage({
   actions?: ReactNode
   /** 主数据下方的附加区块（比如订单详情下的"退款资格"） */
   extra?: ReactNode
+  /** 从主数据的键值表里摘出去的字段，交给 `renderExtra` 单独渲染 */
+  omitKeys?: string[]
+  /** 拿到主数据后渲染的区块（比如订单详情里的商品明细表） */
+  renderExtra?: (data: JsonRecord) => ReactNode
 }) {
   const { state, data, error, reload } = useApi(fetcher, [])
 
@@ -51,7 +57,8 @@ export function ResourceDetailPage({
       {state === 'error' && <ErrorAlert message={error} onRetry={reload} />}
       {state === 'done' && data && (
         <>
-          <KeyValueList data={data} />
+          <KeyValueList data={data} omit={omitKeys} />
+          {renderExtra?.(data)}
           <RawPanel value={data} />
         </>
       )}

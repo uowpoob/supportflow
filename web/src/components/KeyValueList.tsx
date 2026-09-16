@@ -6,9 +6,12 @@ import { humanizeKey, renderValue } from './value'
  * 一个 JSON 对象 → 键值表。
  * 后端字段还没定，所以**不写死字段名**，直接把返回的对象摊开显示。
  * 等 schema 定稿后再换成显式字段（那样能控制顺序和格式）。
+ *
+ * `omit` 用来把某些字段摘出去单独渲染 —— 比如订单详情里的 `items` 是个数组，
+ * 摊在键值表里只会变成一行挤不下的 JSON，它该有自己的表格。
  */
-export function KeyValueList({ data }: { data: JsonRecord }) {
-  const entries = Object.entries(data)
+export function KeyValueList({ data, omit = [] }: { data: JsonRecord; omit?: string[] }) {
+  const entries = Object.entries(data).filter(([key]) => !omit.includes(key))
 
   if (entries.length === 0) {
     return (
