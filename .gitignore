@@ -14,3 +14,5 @@ wheels/
 .env.*
 !.env.example
 .idea/
+
+.workbuddy

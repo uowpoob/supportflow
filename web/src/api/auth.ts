@@ -19,10 +19,12 @@ export function logout(): Promise<void> {
 }
 
 /**
- * 恢复登录状态（刷新页面后还认得出你是谁）。
- * 后端 `GET /me` 已实现，但**尚未接入** `AuthContext` ——
- * 那边目前仍从浏览器临时存储里读身份（见 AuthContext.tsx 顶部注释）。
- * 接入时要同时给 user 加一个 loading 态，否则 `/me` 返回前会被守卫误判成未登录。
+ * 恢复登录状态（关标签页 / 新开标签 / 刷新后还认得出你是谁）。
+ *
+ * `AuthContext` 在挂载时调用它，**不再从浏览器存储里读身份** ——
+ * 那份是用户随手能改的，只有服务端回答的"你是谁"才算数。
+ *
+ * 未登录时后端返回 401，调用方把它当成正常结果（`user = null`），不要报错。
  */
 export function fetchCurrentUser(): Promise<CurrentUser> {
   return http.get<CurrentUser>('/me')

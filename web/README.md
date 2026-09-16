@@ -1,7 +1,6 @@
 # SupportFlow 前端（web/）
 
-React + TypeScript + Vite。第一步只搭骨架：目录、布局、路由、请求封装、三个基础页面。
-业务数据还没接，接口返回空的时候页面显示的是占位内容。
+React + TypeScript + Vite。前后端分离：后端只提供 JSON 接口，前端只负责界面。
 
 ## 跑起来
 
@@ -27,11 +26,11 @@ npm run preview      # 预览打包结果
 
 | 类型 | 例子 | 谁处理 |
 | --- | --- | --- |
-| 前端页面路由 | `/login`、`/customer`、`/admin`、`/admin/orders` | Vite dev server（或生产环境的静态托管） |
+| 前端页面路由 | `/login`、`/customer/orders`、`/admin/refunds` | Vite dev server（或生产环境的静态托管） |
 | 后端数据接口 | `/api/login`、`/api/admin/orders` | 由 `vite.config.ts` 里的 proxy 转发到 FastAPI |
 
 浏览器里只会看到 `127.0.0.1:5173` 这一个源，`/api` 是开发服务器帮你转发的。
-所以**后端不需要开 CORS**，将来加 Cookie 也不会遇到跨域 Cookie 的麻烦。
+所以**后端不需要开 CORS**，Cookie 也不会遇到跨域问题。
 
 转发规则写在 `vite.config.ts`：`/api/login` → `http://127.0.0.1:8000/login`
 （后端路由本身不带 `/api` 前缀，所以转发时把 `/api` 去掉了）。
@@ -42,44 +41,79 @@ npm run preview      # 预览打包结果
 ```
 web/src/
 ├─ api/
-│  ├─ client.ts       统一 fetch 封装：拼地址、带 Cookie、解析 {code,message,data} 信封、把错误压成人话
-│  ├─ auth.ts         POST /login、GET /me（待后端实现）、logout
+│  ├─ client.ts       统一 fetch 封装：拼地址、带 Cookie、解析信封、把错误压成人话
+│  ├─ list.ts         列表返回归一化（后端的三种可能形状都认）+ 分页查询串
+│  ├─ auth.ts         POST /login、POST /logout、GET /me
 │  ├─ customer.ts     客户侧接口
 │  └─ admin.ts        管理侧接口
 ├─ auth/
-│  ├─ AuthContext.tsx 当前登录用户（signIn / signOut）
-│  ├─ guards.tsx      路由守卫：RequireAuth、RequireRole
+│  ├─ AuthContext.tsx 当前登录用户（启动时问 /me，含 initializing 三态）
+│  ├─ guards.tsx      路由守卫：RequireAuth、RequireRole、AuthLoading
 │  └─ paths.ts        角色 → 首页路径（只定义一次）
+├─ components/        公共零件
+│  ├─ Async.tsx               加载中 / 失败可重试 / 空状态 / 待实现说明 / 原始返回
+│  ├─ DataTable.tsx           表格（列可由数据自动推导）
+│  ├─ KeyValueList.tsx        JSON 对象 → 键值表
+│  ├─ Pager.tsx               分页条
+│  ├─ ResourceListPage.tsx    列表页骨架：请求 → 四态 → 分页 → 原始返回
+│  ├─ ResourceDetailPage.tsx  详情页骨架（含 AsyncSection 附加区块）
+│  └─ value.tsx               值的显示规则
+├─ hooks/useApi.ts    发一次请求 + 管 loading/done/error 三态
 ├─ layouts/AppLayout.tsx  顶部导航 + 当前用户 + 退出按钮
-├─ pages/             登录页、客户首页、管理员首页/订单/退款审批、403、404
+├─ pages/             见下表
 ├─ styles/global.css  全部样式（CSS 变量 + 语义化类名，没引 UI 库）
 ├─ App.tsx            路由表
 ├─ main.tsx           入口
 └─ types.ts           与后端 schema 对应的类型
 ```
 
-## 三条要记住的约定
+## 页面与对应接口
+
+| 页面路由 | 调用的接口 | 说明 |
+| --- | --- | --- |
+| `/login` | `POST /login` | 成功后按 `role` 跳 `/customer` 或 `/admin` |
+| `/customer` | `GET /customer/conversations` | 售后首页：快捷入口 + 会话列表 + 对话区（Agent 未接） |
+| `/customer/orders` | `GET /customer/orders` | 我的订单列表 |
+| `/customer/orders/:orderNo` | `GET /customer/orders/{order_no}`、`.../refund-eligibility` | 详情 + 只读的退款资格判定 |
+| `/customer/refund-requests` | `GET /customer/refund-requests` | 我的申请列表 |
+| `/customer/refund-requests/:requestKey` | `GET /customer/refund-requests/{request_key}` | 申请进度 |
+| `/admin` | — | 概览与四个入口 |
+| `/admin/orders` | `GET /admin/orders` | 全部订单 |
+| `/admin/orders/:orderNo` | `GET /admin/orders/{order_no}` | 订单详情 |
+| `/admin/refunds` | `GET /admin/refund-requests` | 待办：`status='pending'` 的申请 |
+| `/admin/refunds/:requestKey` | `GET /admin/refund-requests/{request_key}` | 申请详情 + 审批区（按钮禁用） |
+| `/admin/refund-approvals` | `GET /admin/refund-approvals` | 审批记录（审计） |
+| `/admin/refund-records` | `GET /admin/refund-records` | 退款执行流水 |
+
+**写操作还没打开**：`POST /customer/refund-requests`（提交申请）与
+`POST /admin/refund-requests/{request_key}/decision`（批准 / 拒绝）在界面上留了位置、按钮禁用，
+等后端请求体定稿再启用。对应函数已经在 `api/customer.ts`、`api/admin.ts` 里写好了。
+
+## 四条要记住的约定
 
 1. **页面里不直接写 `fetch`。** 一律走 `src/api/`，否则错误处理要重复写很多遍。
-2. **类型跟着后端 schema 走。** `types.ts` 里的字段名与 `src/supportflow/schemas/*.py` 一一对应，后端改字段这里同步改。
-3. **前端守卫不是安全边界。** `RequireRole` 只是不让人误入别人的页面；谁都能用 curl 直接调接口。真正的拦截必须在后端每个接口上做。
+2. **类型跟着后端 schema 走。** 后端字段定稿后同步改 `types.ts`，前端不自己造字段。
+   现在接口返回的是空信封，所以列表用 `ListResult`、详情用 `JsonRecord` 临时承载。
+3. **前端守卫不是安全边界。** `RequireRole` 只是不让人误入页面的"体验"；
+   谁都能用 curl 直接调接口。真正的拦截必须在后端每个接口上做。
+4. **身份不写在请求里。** 前端从不传 `user_id`，后端只认 Cookie。
+   这是"看不到别人的订单"的前提。
 
-## 现在的状态与缺口
+## 现在的状态
 
-已经做完：
+已完成：登录 / 退出 / 恢复身份（后端下发 HttpOnly Cookie，前端启动时问 `/me`）、
+角色分流与 403、以及上表全部读取类页面的接线。
 
-- 路由骨架：`/`（按角色分流）、`/login`、`/customer`、`/admin`、`/admin/orders`、`/admin/refunds`、404
-- 登录页调真实接口 `POST /api/login`，成功后按 `role` 跳到 `/customer` 或 `/admin`；失败显示后端返回的原因，422 会逐字段列出
-- 管理员两个列表页会真的发请求，把后端原始返回打出来（用来确认链路通不通）
-- 退出按钮清本地状态并回登录页
+后端 14 条业务接口**目前都是 `return result.success()` 的空壳**：没有业务逻辑，
+业务表也没有数据。所以这些页面现在统一显示"没有数据"的空状态，
+并在下方折叠展示接口原始返回，方便对着字段继续开发。
 
-还没做（按顺序）：
+还没做：
 
-| # | 事项 | 说明 |
-| --- | --- | --- |
-| 1 | 后端下发会话 Cookie | 后端加 `Set-Cookie`（HttpOnly）+ `GET /me`，前端初始化时向服务端问"我是谁" |
-| 2 | 刷新保持登录 | 现在靠 `sessionStorage` 记着（见 `AuthContext.tsx` 顶部注释），换成服务端会话后删掉 |
-| 3 | 真正的退出 | 后端加 `POST /logout`，现在只是清前端状态 |
-| 4 | 后端接口鉴权 | `/admin/*` 现在没有鉴权，谁都能调 |
-| 5 | 审批对象改为申请编号 | 现在是 `POST /admin/deal_refund_approvals/{order_id}`，应改成退款申请编号 |
-| 6 | 对话与会话列表 | 等 Agent + 会话接口；SSE 断线重连后不能重复执行业务操作 |
+| # | 事项 |
+| --- | --- |
+| 1 | 后端给 `/admin/**`、`/customer/**` 挂鉴权（现在零鉴权，任何人可调） |
+| 2 | 业务逻辑：退款资格判定、订单查询、审批写入 |
+| 3 | 数据可复现：`scripts/seed.py`（现在业务表 0 行） |
+| 4 | 写操作界面：提交退款申请表单、批准 / 拒绝按钮 |
+| 5 | 对话区接 Agent 与 SSE 流式输出 |

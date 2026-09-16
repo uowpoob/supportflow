@@ -1,53 +1,28 @@
-import { useEffect, useState } from 'react'
-
 import { fetchOrders } from '../api/admin'
-import { ApiError } from '../api/client'
+import { StubNotice } from '../components/Async'
+import { ResourceListPage } from '../components/ResourceListPage'
 
-/** 订单页：这一步只验证"请求链路通不通"，把后端原始返回展示出来。 */
+/** 全部订单 —— GET /admin/orders */
 export function AdminOrdersPage() {
-  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
-  const [data, setData] = useState<unknown>(null)
-  const [message, setMessage] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-
-    fetchOrders(0, 10)
-      .then((result) => {
-        if (cancelled) return
-        setData(result)
-        setState('done')
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setMessage(err instanceof ApiError ? err.message : '请求失败')
-        setState('error')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
-    <div className="stack">
-      <header className="page-head">
-        <h2 className="page-head__title">订单</h2>
-        <p className="page-head__desc">
-          数据来自 <code>GET /api/admin/orders?offset=0&amp;limit=10</code>
-        </p>
-      </header>
-
-      {state === 'loading' && <p className="muted">加载中…</p>}
-      {state === 'error' && <div className="alert alert--error">{message}</div>}
-      {state === 'done' && (
+    <ResourceListPage
+      title="订单"
+      desc={
         <>
-          <div className="alert alert--info">
-            后端返回如下。等列表数据结构定下来，这里换成表格。
-          </div>
-          <pre className="codeblock">{JSON.stringify(data, null, 2)}</pre>
+          来自 <code>GET /api/admin/orders?offset=&amp;limit=</code>
+          ，含全部客户的订单。点「查看」进入详情核对退款依据。
         </>
-      )}
-    </div>
+      }
+      fetcher={fetchOrders}
+      detailKey="order_no"
+      detailTo={(orderNo) => `/admin/orders/${orderNo}`}
+      notice={
+        <StubNotice>
+          ⚠️ 这个接口目前<strong>没有管理员鉴权</strong>，任何人直接 curl
+          都能拿到数据。前端守卫拦不住 curl，必须在后端接口上校验。
+        </StubNotice>
+      }
+      emptyHint="后端 orders 表还没有数据。"
+    />
   )
 }

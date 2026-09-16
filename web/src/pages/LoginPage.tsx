@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { AuthLoading } from '../auth/guards'
 import { returnPathFor } from '../auth/paths'
 
 interface LocationState {
@@ -11,7 +12,7 @@ interface LocationState {
 }
 
 export function LoginPage() {
-  const { user, signIn } = useAuth()
+  const { user, initializing, signIn } = useAuth()
   const location = useLocation()
 
   const [username, setUsername] = useState('')
@@ -19,6 +20,12 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [details, setDetails] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
+
+  // 身份还没确认完就先等着，别急着渲染表单 ——
+  // 否则带着有效 Cookie 的人（比如刷新页面）会先看到登录表单闪一下，再被送进后台。
+  if (initializing) {
+    return <AuthLoading />
+  }
 
   // 恢复原访问地址；没有原地址或角色不匹配时进入自己的首页。
   if (user) {

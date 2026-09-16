@@ -8,7 +8,8 @@ SESSION_COOKIE_NAME = "supportflow_session"
 
 
 class AuthSettings(BaseSettings):
-    SESSION_TTL_SECONDS: int = Field(default=86400, gt=0)
+    # 会话有效期：1 小时。
+    SESSION_TTL_SECONDS: int = Field(default=3600, gt=0)
     SESSION_COOKIE_SECURE: bool = False  # 本地 HTTP；生产 HTTPS 必须设为 true。
 
     model_config = SettingsConfigDict(
