@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from supportflow.core.auth import SESSION_COOKIE_NAME
 from supportflow.db.session import get_db
 from supportflow.models.entities import User
+from supportflow.models.enums import UserRole
 from supportflow.services.login import resolve_session
 
 
@@ -34,4 +35,18 @@ async def get_current_user(
     user = await resolve_session(db, token) if token else None
     if user is None:
         raise _unauthorized()
+    return user
+
+def _forbidden() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                         detail="当前账号无权访问该接口")
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != UserRole.ADMIN:
+        raise _forbidden()
+    return user
+
+async def require_customer(user: User = Depends(get_current_user)) -> User:
+    if user.role != UserRole.CUSTOMER:
+        raise _forbidden()
     return user

@@ -1,10 +1,11 @@
 """管理员接口：订单查看、退款审批、审批记录与退款执行流水。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from supportflow.api.deps import require_admin
 from supportflow.schemas import result
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
 # ------------------------------ 订单 ------------------------------

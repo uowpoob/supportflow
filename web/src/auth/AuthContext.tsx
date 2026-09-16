@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 
 import { fetchCurrentUser, login as loginApi, logout as logoutApi } from '../api/auth'
+import { ApiError } from '../api/client'
 import type { CurrentUser, LoginPayload } from '../types'
 
 /** 登录态**只以服务端为准**。
@@ -22,7 +23,10 @@ type AuthContextValue = {
    *  否则会把"正在恢复"误判成"已登出"，一进门就把人踢回登录页。
    *  所有做身份判断的地方都必须先看这个标记。 */
   initializing: boolean
+  /** 退出请求正在途中。界面据此禁用按钮，避免连点发出两次撤销。 */
+  signingOut: boolean
   signIn: (payload: LoginPayload) => Promise<CurrentUser>
+  /** 退出登录。**失败会抛异常**，调用方必须处理 —— 见下方实现注释。 */
   signOut: () => Promise<void>
 }
 
@@ -31,6 +35,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [initializing, setInitializing] = useState(true)
+  const [signingOut, setSigningOut] = useState(false)
 
   // 应用启动时只问一次服务端：我手上这张 Cookie 是谁的？
   useEffect(() => {
@@ -64,22 +69,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
+    setSigningOut(true)
     try {
+      // 真正的撤销发生在服务端：删掉 auth_sessions 那一行 + 下发过期的 Set-Cookie。
+      // 前端删不掉 HttpOnly Cookie，所以这一步失败就等于**根本没退出**。
       await logoutApi()
-    } catch {
-      // 撤销请求失败（后端没起、网络断了）**不应该阻塞本地登出**：
-      // 界面照样清空、照样回登录页。
-      // 代价是服务端那条会话还留着 —— 它会自然过期（当前 1 小时），
-      // 这也是"前端登出"和"服务端撤销"两件事的必然差别。
-    } finally {
-      // 无论如何都清本地状态，否则界面卡在"显示已登录、服务端却已经不认"的错位状态。
       setUser(null)
+    } catch (error) {
+      // 401 是例外：说明这张凭证本来就失效了（过期 / 已被别处撤销），
+      // 本地按"已退出"处理是安全的，也不该把用户卡在一个无意义的错误提示里。
+      if (error instanceof ApiError && error.status === 401) {
+        setUser(null)
+        return
+      }
+      // 其它失败（连不上后端 / 5xx）**必须抛出去**：
+      // 服务端那条会话还活着，这里若悄悄清掉本地状态，界面会宣告"退出成功"，
+      // 而刷新时 `/me` 又会把人认回来 —— 用户以为退出了，凭证其实一直有效。
+      throw error
+    } finally {
+      setSigningOut(false)
     }
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, initializing, signIn, signOut }),
-    [user, initializing, signIn, signOut],
+    () => ({ user, initializing, signingOut, signIn, signOut }),
+    [user, initializing, signingOut, signIn, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

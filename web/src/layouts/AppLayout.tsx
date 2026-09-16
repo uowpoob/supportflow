@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 
+import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { roleLabel } from '../auth/paths'
 
@@ -8,12 +10,22 @@ type NavItem = { to: string; label: string; end?: boolean }
 
 /** 公共布局：顶部导航（品牌 / 主导航 / 当前用户 / 退出）+ 内容区。 */
 export function AppLayout({ nav }: { nav: NavItem[] }) {
-  const { user, signOut } = useAuth()
+  const { user, signOut, signingOut } = useAuth()
   const navigate = useNavigate()
+  const [signOutError, setSignOutError] = useState<string | null>(null)
 
   async function handleSignOut() {
-    await signOut()
-    navigate('/login', { replace: true })
+    setSignOutError(null)
+    try {
+      await signOut()
+      // 只有服务端真的撤销成功才离开 —— 本地状态跟着服务端走。
+      navigate('/login', { replace: true })
+    } catch (err) {
+      // 服务端那条会话很可能还在，此时**绝不能**跳转或清空界面：
+      // 否则用户以为退出了，刷新一下却又是登录态。
+      // 正确做法是留在当前页、说明原因、让他重试。
+      setSignOutError(err instanceof ApiError ? err.message : '退出登录失败，请重试')
+    }
   }
 
   return (
@@ -44,8 +56,13 @@ export function AppLayout({ nav }: { nav: NavItem[] }) {
                 <span className="userchip__name">{user.username}</span>
                 <span className="userchip__role">{roleLabel(user.role)}</span>
               </span>
-              <button type="button" className="btn btn--ghost" onClick={handleSignOut}>
-                退出
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={handleSignOut}
+                disabled={signingOut}
+              >
+                {signingOut ? '退出中…' : '退出'}
               </button>
             </>
           )}
@@ -53,6 +70,22 @@ export function AppLayout({ nav }: { nav: NavItem[] }) {
       </header>
 
       <main className="page">
+        {signOutError && (
+          <div className="alert alert--error alert--row" role="alert">
+            <div>
+              <div className="alert__title">退出登录失败，服务端会话可能仍然有效</div>
+              <div>{signOutError}</div>
+            </div>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={handleSignOut}
+              disabled={signingOut}
+            >
+              {signingOut ? '重试中…' : '重试'}
+            </button>
+          </div>
+        )}
         <Outlet />
       </main>
     </div>

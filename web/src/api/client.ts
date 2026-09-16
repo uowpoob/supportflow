@@ -39,19 +39,27 @@ function unwrap<T>(body: unknown): T {
   return body as T
 }
 
-/** 把后端返回的各式错误压成一句人话 + 若干细节。 */
+/** 把后端返回的各式错误压成一句人话 + 若干细节。
+ *
+ *  原则：**后端已经说明原因就照用**。同一个状态码在不同接口含义不同 ——
+ *  `/login` 的 401 是"用户名或密码错误"，`/me`、`/logout` 的 401 是"会话已失效"，
+ *  客户端按状态码一刀切会把后者也说成前者，纯属误导。
+ *  只有后端没给 `detail`（或只给了 "Not Found" 这类无信息量的英文）时才按状态码兜底。 */
 function parseError(status: number, body: unknown): ApiError {
   let message = `请求失败（HTTP ${status}）`
+  let backendSaidWhy = false
   const details: string[] = []
 
   if (body !== null && typeof body === 'object' && 'detail' in body) {
     const detail = (body as { detail: unknown }).detail
 
-    if (typeof detail === 'string') {
+    if (typeof detail === 'string' && detail.trim() !== '') {
       message = detail
+      backendSaidWhy = true
     } else if (Array.isArray(detail)) {
       // FastAPI 校验错误：detail: [{loc: ["body","username"], msg: "..."}]
       message = '提交的内容不符合要求'
+      backendSaidWhy = true
       for (const item of detail) {
         if (item !== null && typeof item === 'object' && 'msg' in item) {
           const loc = (item as { loc?: unknown[] }).loc ?? []
@@ -63,14 +71,14 @@ function parseError(status: number, body: unknown): ApiError {
     }
   }
 
-  if (status === 401) {
-    message = '用户名或密码错误'
-  } else if (status === 403) {
-    message = '当前账号没有访问该页面的权限'
-  } else if (status === 404) {
+  if (status === 404) {
     message = '接口不存在（后端可能还没实现）'
   } else if (status >= 500) {
     message = '服务端出错，请查看后端日志'
+  } else if (!backendSaidWhy && status === 401) {
+    message = '需要登录后才能访问该接口'
+  } else if (!backendSaidWhy && status === 403) {
+    message = '当前账号没有访问该接口的权限'
   }
 
   return new ApiError(status, message, details)

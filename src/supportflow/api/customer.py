@@ -1,10 +1,11 @@
 """客户接口：我的订单、退款申请、对话会话。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter,Depends
 
+from supportflow.api.deps import require_customer
 from supportflow.schemas import result
 
-router = APIRouter(prefix="/customer", tags=["customer"])
+router = APIRouter(prefix="/customer", tags=["customer"], dependencies=[Depends(require_customer)])
 
 
 # ------------------------------ 订单 ------------------------------

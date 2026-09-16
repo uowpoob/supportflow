@@ -6,6 +6,7 @@ from supportflow.api.login import router as login_router
 from supportflow.api.logout import router as logout_router
 from supportflow.api.me import router as me_router
 from supportflow.api.customer import router as customer_router
+from supportflow.api.health import router as health_router
 
 
 api_router = APIRouter()
@@ -15,4 +16,4 @@ api_router.include_router(login_router)
 api_router.include_router(logout_router)
 api_router.include_router(me_router)
 api_router.include_router(customer_router)
-
+api_router.include_router(health_router)
