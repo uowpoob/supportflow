@@ -1,12 +1,13 @@
 """离线验证关键唯一约束；不连接或修改本地 MySQL。"""
 import unittest
+from datetime import timedelta
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from supportflow.db.base import Base
-from supportflow.models import Conversation, Order, RefundApproval, RefundRecord, RefundRequest, User
+from supportflow.db.base import Base, utc_now
+from supportflow.models import AuthSession, Conversation, Order, RefundApproval, RefundRecord, RefundRequest, User
 from supportflow.models.enums import ApprovalDecision, RefundStatus
 
 
@@ -35,6 +36,28 @@ class ModelConstraintTests(unittest.TestCase):
     def request(self, key, status=RefundStatus.PENDING):
         return RefundRequest(request_key=key, order_id=1, conversation_id="conversation-1",
                              amount_cents=29900, reason_original="左耳无声", status=status)
+
+    def test_auth_sessions_allow_multiple_logins_but_not_duplicate_tokens(self):
+        expiry = utc_now() + timedelta(days=1)
+        self.session.add_all([
+            AuthSession(user_id=1, token_hash="a" * 64, expires_at=expiry),
+            AuthSession(user_id=1, token_hash="b" * 64, expires_at=expiry),
+        ])
+        self.session.commit()
+        self.session.add(AuthSession(user_id=1, token_hash="a" * 64, expires_at=expiry))
+        with self.assertRaises(IntegrityError):
+            self.session.flush()
+
+    def test_auth_session_requires_existing_user_and_expiration(self):
+        for fields in (
+            {"user_id": 999, "expires_at": utc_now()},
+            {"user_id": 1, "expires_at": None},
+        ):
+            with self.subTest(fields=fields):
+                self.session.add(AuthSession(token_hash="c" * 64, **fields))
+                with self.assertRaises(IntegrityError):
+                    self.session.flush()
+                self.session.rollback()
 
     def test_active_and_refunded_requests_block_duplicates(self):
         for status in (RefundStatus.PENDING, RefundStatus.APPROVED, RefundStatus.REFUNDED):
