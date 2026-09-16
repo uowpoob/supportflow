@@ -1,4 +1,17 @@
+import hashlib
+import secrets
+
 import bcrypt
+
+
+def generate_session_token() -> str:
+    """32 字节安全随机数（256 bit），编码为可放进 Cookie 的字符串。"""
+    return secrets.token_urlsafe(32)
+
+
+def hash_session_token(token: str) -> str:
+    """仅用于高强度随机会话凭证；用户密码仍使用 bcrypt。"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 def get_password_hash(password: str) -> str:
     password_bytes = password.encode("utf-8")

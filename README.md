@@ -48,7 +48,7 @@
 ## 文件的作用
 
 第一版业务表与状态说明见 [数据库结构](docs/database-schema.md)，实体位于 `src/supportflow/models/`。
-当前已定义实体，尚未执行建表迁移。离线约束检查：`.venv/Scripts/python.exe -m unittest discover -s tests -v`。
+已配置 Alembic，初始版本包含七张业务表。新库建表、已有库接入和后续变更见 [数据库迁移说明](docs/database-migrations.md)。离线约束及迁移检查：`.venv/Scripts/python.exe -m unittest discover -s tests -v`。
 
 - `pyproject.toml`：项目元信息和直接依赖，类似 Maven 的 pom.xml。
 - `uv.lock`：精确依赖版本，协作和部署时复现环境。

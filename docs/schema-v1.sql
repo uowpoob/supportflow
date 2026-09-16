@@ -1,4 +1,4 @@
--- MySQL 8.0.16+；仅供审阅，未执行。正式建表使用后续 Alembic 迁移。
+-- MySQL 8.0.16+；结构参考。正式建表使用 Alembic 迁移，见 database-migrations.md。
 
 
 CREATE TABLE users (

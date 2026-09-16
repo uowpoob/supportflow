@@ -5,7 +5,7 @@
 用户端通过对话调用工具，管理端通过 HTTP 接口查看订单、审批退款；两者共用业务层。
 MySQL 保存业务事实和会话归属。PostgreSQL 的消息与 checkpoint 表在接入 LangGraph 时由对应组件管理，本步不定义图状态。
 
-本次交付 SQLAlchemy 实体和可审阅的 [MySQL DDL](schema-v1.sql)，尚未执行建表。正式落库使用后续 Alembic 迁移，目标 MySQL 8.0.16+（支持强制 CHECK 约束）。
+初始七张业务表对应迁移 `0001_initial`；认证会话表由 `0002_auth_sessions` 新增。[MySQL DDL](schema-v1.sql) 仅作为初始七张表的结构参考，当前结构以 ORM 和迁移为准。正式落库使用 [Alembic 迁移](database-migrations.md)，目标 MySQL 8.0.16+（支持强制 CHECK 约束）。
 
 - 主键除会话 UUID 外为自增 BIGINT；所有表包含 `created_at`、`updated_at`，使用 UTC、微秒精度。
 - 时间默认值、更新时间和 UUID 由 ORM 写入，直接执行 SQL 时必须自行提供。状态存储小写字符串。
@@ -20,6 +20,7 @@ MySQL 保存业务事实和会话归属。PostgreSQL 的消息与 checkpoint 表
 | 表 / 实体 | 字段 | 用途 |
 | --- | --- | --- |
 | `users` / User | username（唯一）、password_hash、role、is_active | 用户与管理员共用账号表；只保存密码哈希 |
+| `auth_sessions` / AuthSession | token_hash（唯一，64 字符）、user_id（外键及索引）、expires_at（索引） | 登录凭证的 SHA-256 摘要及 UTC 过期时间；同一用户可有多个登录会话 |
 | `orders` / Order | order_no（唯一）、user_id、paid_amount_cents、payment_status、fulfillment_status、paid_at、shipped_at、delivered_at、tracking_no | 订单归属、支付和履约事实；时间及物流单号可为空 |
 | `order_items` / OrderItem | order_id、product_code、product_name、product_model、quantity、unit_price_cents | 一单多商品；型号可为空，单价是商品快照，退款金额取订单实付 |
 | `conversations` / Conversation | id（UUID）、user_id、title | 会话归属与列表；id 同时用作 checkpoint thread_id |
@@ -31,6 +32,11 @@ MySQL 保存业务事实和会话归属。PostgreSQL 的消息与 checkpoint 表
 申请的客户从订单归属获取，不重复存储 user_id；业务层必须验证订单与会话属于同一登录用户。
 
 ## 状态
+
+认证会话与 `conversations` 中的售后对话不同。认证会话包含公共的 id、created_at、updated_at，不保存凭证原文。
+登录逻辑已生成高强度随机凭证，计算 SHA-256 摘要后写入本表；密码仍使用独立的密码哈希算法，详见 [登录流程](login-flow.md)。
+认证时必须检查 `expires_at > 当前 UTC 时间` 和用户启用状态；数据库不会自动使过期记录失效或删除记录。
+退出时计划删除当前凭证对应的会话记录。当前已接入登录写入及 Cookie 下发，尚未实现后续请求的身份校验和退出接口。
 
 | 字段 | 可用值 / 流转 |
 | --- | --- |

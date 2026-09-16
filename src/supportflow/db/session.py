@@ -2,21 +2,12 @@
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from supportflow.core.config import settings
+from supportflow.core.database import DatabaseSettings
 
 # URL.create 保留密码中的 @、/ 等特殊字符，也支持库名中的空格。
-database_url = URL.create(
-    drivername="mysql+asyncmy",
-    username=settings.MYSQL_USER,
-    password=settings.MYSQL_PASSWORD.get_secret_value(),
-    host=settings.MYSQL_HOST,
-    port=settings.MYSQL_PORT,
-    database=settings.MYSQL_DATABASE,
-    query={"charset": "utf8mb4"},
-)
+database_url = DatabaseSettings().database_url
 
 engine = create_async_engine(
     database_url,

@@ -30,6 +30,22 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(default=True)
 
 
+class AuthSession(TimestampMixin, Base):
+    """登录会话；凭证原文只交给浏览器，数据库保存 SHA-256 十六进制摘要。"""
+
+    __tablename__ = "auth_sessions"
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, comment="随机会话凭证的 SHA-256 摘要，不保存原文"
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        Timestamp, index=True, comment="UTC 过期时间；是否有效由认证逻辑检查"
+    )
+
+
 class Order(TimestampMixin, Base):
     __tablename__ = "orders"
     __table_args__ = (

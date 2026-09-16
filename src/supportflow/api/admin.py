@@ -11,12 +11,12 @@ async def root():
 
 #查看订单表
 @router.get("/orders")
-async def check_orders(skip: int = 0, limit: int = 10):
+async def list_orders(offset: int = 0, limit: int = 10):
     return result.success()
 
 #查看退款列表
 @router.get("/refund_approvals")
-async def list_refund_approvals(skip: int = 0, limit: int = 10):
+async def list_refund_approvals(offset: int = 0, limit: int = 10):
     return result.success()
 
 #操作退款 人工审批

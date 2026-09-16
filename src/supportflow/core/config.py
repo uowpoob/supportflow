@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import SecretStr, field_validator
+from pydantic_settings import SettingsConfigDict
+from supportflow.core.database import DatabaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -12,13 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
-class Settings(BaseSettings):
-    MYSQL_HOST: str = "127.0.0.1"
-    MYSQL_PORT: int = Field(default=3306, ge=1, le=65535)
-    MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: SecretStr = SecretStr("")
-    MYSQL_DATABASE: str = "agent_project"
-
+class Settings(DatabaseSettings):
     DEEPSEEK_API_KEY: str
     DEEPSEEK_BASE_URL: str
     DEEPSEEK_MODEL: str = "deepseek-v4-flash"
