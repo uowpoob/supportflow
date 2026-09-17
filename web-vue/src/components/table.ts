@@ -12,6 +12,14 @@ export interface Column {
    * 返回空字符串会自动显示成灰色破折号 —— 见 `<CellValue>`。
    */
   render?: (row: JsonRecord) => string
+  /**
+   * 给这一格套一个 class，比如状态列返回 `'tag tag--warn'` 把它渲染成彩色标签。
+   *
+   * 为什么不把颜色塞进 `render`？因为 `render` 的契约是"只返回字符串"（见 `value.ts`），
+   * 回来 JSX/VNode 会把格式化逻辑和渲染逻辑搅在一起。
+   * 文案归 `render`、样式归 `cellClass`，两个函数各管一件事。
+   */
+  cellClass?: (row: JsonRecord) => string
 }
 
 /** 后端字段还没定，所以列由数据自己决定：取所有行出现过的键，去重保序。 */

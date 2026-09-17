@@ -31,11 +31,18 @@ function readTotal(obj: Record<string, unknown>): number | undefined {
   return undefined
 }
 
-/** 拼分页查询串；只带真正传了的参数，避免出现 `?offset=undefined`。 */
+/** 拼分页查询串；只带真正传了的参数，避免出现 `?offset=undefined`。
+ *
+ *  遍历所有键而不是只认 offset/limit：退款列表要按 `status` 过滤，
+ *  以后还会有别的过滤条件。认白名单的话每加一个参数都得回来改这个函数 ——
+ *  页面上写着 `{ status: 'pending' }` 却被静默丢掉，是最难查的那种 bug。
+ */
 export function pageQuery(query: PageQuery): string {
   const params = new URLSearchParams()
-  if (query.offset !== undefined) params.set('offset', String(query.offset))
-  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '') continue
+    params.set(key, String(value))
+  }
   const suffix = params.toString()
   return suffix ? `?${suffix}` : ''
 }

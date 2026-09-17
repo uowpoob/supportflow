@@ -29,6 +29,16 @@ const props = defineProps<{
   detailKey?: string
   detailTo?: (value: string) => string
   detailLabel?: string
+  /**
+   * 额外的过滤参数，会与 `offset`/`limit` 合并后交给 `fetcher`（例如退款列表的 `status`）。
+   *
+   * 写成**函数**而不是对象是必要的：只要在 effect 里调用它，
+   * 它内部读到的 `ref` 就自动成为依赖，过滤条件一变请求就重发。
+   * 传普通对象的话，父组件换了个新对象也不会触发 —— 那种"点了筛选没反应"的 bug 很难查。
+   *
+   * 切换过滤条件时记得给这个组件加 `:key`，让 `offset` 回到第一页。
+   */
+  extraQuery?: () => PageQuery
 }>()
 
 const offset = ref(0)
@@ -40,7 +50,7 @@ const doFetch = props.fetcher
 // 把 `offset` 传进 fetcher 就算建立了依赖：offset 一变，请求自动重发。
 // React 版这里要额外写一个 `[offset]` 依赖数组，Vue 不用。
 const { state, data, error, reload } = useApi(() =>
-  doFetch({ offset: offset.value, limit: DEFAULT_LIMIT }),
+  doFetch({ offset: offset.value, limit: DEFAULT_LIMIT, ...(props.extraQuery?.() ?? {}) }),
 )
 </script>
 

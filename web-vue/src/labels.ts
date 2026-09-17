@@ -20,6 +20,27 @@ export const FULFILLMENT_STATUS_LABELS: Record<string, string> = {
   delivered: '已签收',
 }
 
+/** 对齐 `models/enums.py::ApprovalDecision` */
+export const APPROVAL_DECISION_LABELS: Record<string, string> = {
+  approved: '批准',
+  rejected: '拒绝',
+}
+
+/** 对齐 `models/enums.py::RefundStatus` */
+export const REFUND_STATUS_LABELS: Record<string, string> = {
+  pending: '待审批',
+  approved: '已批准',
+  rejected: '已拒绝',
+  refunded: '已退款',
+}
+
+/** 对齐 `models/enums.py::RefundExecutionStatus` */
+export const REFUND_EXECUTION_STATUS_LABELS: Record<string, string> = {
+  processing: '处理中',
+  succeeded: '已成功',
+  failed: '失败',
+}
+
 /** 查不到就原样显示 —— 后端加了新状态时看到的是原文，而不是 "undefined"。 */
 export function labelOf(labels: Record<string, string>, value: unknown): string {
   const key = String(value ?? '')

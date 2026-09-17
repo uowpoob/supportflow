@@ -1,4 +1,4 @@
-"""客户订单接口：我的订单列表与详情。"""
+"""客户订单接口：我的订单列表与详情，以及退款资格判定。"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from supportflow.api.auth.deps import require_customer
 from supportflow.db.session import get_db
 from supportflow.models.entities import User
-from supportflow.schemas import result
 from supportflow.schemas.orders import MyOrderBrief, MyOrderDetail, MyOrderPage
+from supportflow.schemas.refunds import RefundEligibilityOut
 from supportflow.schemas.result import Success
 from supportflow.services.orders import get_order_with_items_for_user, list_orders_for_user
+from supportflow.services.refunds import check_refund_eligibility
 
 # `/customer` 前缀与客户准入由 customer/__init__.py 统一挂，这里只声明路径与标签。
 router = APIRouter(tags=["customer"])
@@ -64,10 +65,25 @@ async def get_order(
     return Success[MyOrderDetail](data=MyOrderDetail.from_row(order, items))
 
 
-@router.get("/orders/{order_no}/refund-eligibility")
-async def get_refund_eligibility(order_no: str):
-    """退款资格判定（只读）：能不能退、不能退的原因。
+@router.get("/orders/{order_no}/refund-eligibility", response_model=Success[RefundEligibilityOut])
+async def get_refund_eligibility(
+    order_no: str,
+    user: User = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> Success[RefundEligibilityOut]:
+    """退款资格判定（只读）：能不能退、为什么、能退多少、窗口到什么时候。
 
-    纯查询：不写库、不改状态，可以重复调用，结果只取决于当前时间与订单数据。
+    **纯查询**：不写库、不改状态、不占名额，可以随便重复调用，结果只取决于
+    当前时间和订单数据。所以它是个 GET —— 一个没有副作用的判定不该用 POST。
+
+    它和提交接口共用 `services/refunds.py::evaluate_eligibility`，
+    所以不会出现"页面说能退、提交说不能退"这种自相矛盾的界面。
+
+    不是我的订单 / 不存在，仍然是同一个 404「订单不存在」。
     """
-    return result.success()
+    found = await check_refund_eligibility(db, user.id, order_no)
+    if found is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+
+    _, eligibility = found
+    return Success[RefundEligibilityOut](data=RefundEligibilityOut.from_eligibility(eligibility))

@@ -663,3 +663,81 @@ code {
 .side-empty .btn {
   margin-top: 8px;
 }
+
+/* ---------- 状态标签 ---------- */
+/* 退款申请在列表里最重要的信息就是"到哪一步了"，所以给状态一个视觉记号，
+   而不是让用户去读一列灰字。颜色语义跟 .alert 一致：蓝=进行中、绿=成功（对号）、
+   黄=等待处理、红=否定的结果。 */
+
+.tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.tag--info {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.tag--ok {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.tag--warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.tag--danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.tag--muted {
+  background: #eef1f4;
+  color: var(--text-muted);
+}
+
+/* ---------- 退款申请表单 ---------- */
+
+/* textarea 复用 .field__input 的边框和内边距，只额外允许纵向拉伸。
+   `font-family: inherit` 不能省 —— 浏览器默认给 textarea 用等宽字体。 */
+.field__textarea {
+  min-height: 78px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+/* 列表页顶部的过滤条：只占一小块，别让一个下拉框铺满整行。 */
+.filter-field {
+  max-width: 260px;
+}
+
+/* 资格判定的结果块：能不能退，一眼看清。 */
+.verdict {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.verdict__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.verdict__detail {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+

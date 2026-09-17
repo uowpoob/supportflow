@@ -51,8 +51,12 @@ function linkTarget(row: JsonRecord): string {
       <tbody>
         <tr v-for="(row, index) in rows" :key="rowKey(row, index)">
           <td v-for="col in cols" :key="col.key">
-            <CellValue v-if="col.render" :text="col.render(row)" />
-            <CellValue v-else :value="row[col.key]" />
+            <!-- cellClass 决定"长什么样"（例如状态列返回 'tag tag--warn'），
+                 里面的 CellValue 决定"显示什么"。render 仍然只返回字符串。 -->
+            <span :class="col.cellClass?.(row)">
+              <CellValue v-if="col.render" :text="col.render(row)" />
+              <CellValue v-else :value="row[col.key]" />
+            </span>
           </td>
           <td v-if="detailKey && detailTo">
             <RouterLink v-if="linkTarget(row)" class="link" :to="linkTarget(row)">

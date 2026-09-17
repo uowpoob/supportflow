@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { fetchMyOrder, fetchRefundEligibility } from '../api/customer'
-import AsyncSection from '../components/AsyncSection.vue'
+import { useApi } from '../composables/useApi'
 import OrderItems from '../components/OrderItems.vue'
 import OrderTimeline from '../components/OrderTimeline.vue'
+import RefundApplyForm from '../components/RefundApplyForm.vue'
+import RefundEligibilityPanel from '../components/RefundEligibilityPanel.vue'
 import ResourceDetailPage from '../components/ResourceDetailPage.vue'
-import StubNotice from '../components/StubNotice.vue'
 
 /**
  * 时间线字段：从默认的键值表里摘出去，交给 `OrderTimeline` 单独排版。
@@ -20,6 +22,30 @@ const OMIT_KEYS = ['items', ...TIMELINE_KEYS]
 /** 订单详情 —— GET /customer/orders/{order_no} + 退款资格子接口 */
 const route = useRoute()
 const orderNo = String(route.params.orderNo ?? '')
+
+/**
+ * 退款资格**只请求一次**，由这个页面拿着，再分给下面的面板和表单。
+ *
+ * 为什么不各自请求一次：两个组件各发一次就会出现"面板说能退、按钮是灰的"，
+ * 更糟的是两次请求之间订单状态可能已经变了（比如管理员刚好批了退款）。
+ * 一份结果、两个消费者，界面就不可能自相矛盾。
+ */
+const {
+  state: eligibilityState,
+  data: eligibilityData,
+  error: eligibilityError,
+  reload: reloadEligibility,
+} = useApi(() => fetchRefundEligibility(orderNo))
+
+/** 不能提交时按钮旁边显示的原因。 */
+const blockReason = computed(() => {
+  if (!eligibilityData.value) return '正在判定退款资格…'
+  if (eligibilityData.value.eligible) return ''
+  if (eligibilityData.value.existing_request_key) {
+    return '该订单已有一条进行中的申请，请直接查看它的进度。'
+  }
+  return eligibilityData.value.reason_text
+})
 </script>
 
 <template>
@@ -39,29 +65,22 @@ const orderNo = String(route.params.orderNo ?? '')
       <OrderItems :data="data" />
     </template>
 
-    <template #actions>
-      <section class="section">
-        <h3 class="section__title">提交退款申请</h3>
-        <StubNotice>
-          提交入口是 <code>POST /api/customer/refund-requests</code>
-          ，后端尚未实现、请求体（退款原因、金额）也还没定，所以按钮先禁用。
-        </StubNotice>
-        <div class="page-actions">
-          <button type="button" class="btn btn--primary" disabled>提交退款申请</button>
-          <span class="muted">等 POST /customer/refund-requests 定稿后启用</span>
-        </div>
-      </section>
+    <template #extra>
+      <RefundEligibilityPanel
+        :state="eligibilityState"
+        :data="eligibilityData"
+        :error="eligibilityError"
+        @retry="reloadEligibility"
+      />
     </template>
 
-    <template #extra>
-      <AsyncSection title="退款资格" :fetcher="() => fetchRefundEligibility(orderNo)">
-        <template #notice>
-          <StubNotice>
-            这是<strong>只读</strong>判定：只回答「能不能退、为什么不能」，不写库、不占额度，
-            可以反复调用。真正的资格规则还没实现。
-          </StubNotice>
-        </template>
-      </AsyncSection>
+    <template #actions>
+      <RefundApplyForm
+        :order-no="orderNo"
+        :eligible="eligibilityData?.eligible === true"
+        :amount-cents="eligibilityData?.amount_cents ?? 0"
+        :block-reason="blockReason"
+      />
     </template>
   </ResourceDetailPage>
 </template>
