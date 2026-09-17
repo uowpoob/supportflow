@@ -1,4 +1,4 @@
-"""创建本地模拟账号：python -m supportflow.db.seed_users。"""
+"""创建本地模拟账号：python -m supportflow.db.seed.seed_users。"""
 
 import asyncio
 import secrets

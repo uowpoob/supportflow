@@ -1,6 +1,6 @@
-"""创建本地演示订单与商品明细：python -m supportflow.db.seed_orders。
+"""创建本地演示订单与商品明细：python -m supportflow.db.seed.seed_orders。
 
-前提：先跑过 python -m supportflow.db.seed_users（订单按 username 找归属）。
+前提：先跑过 python -m supportflow.db.seed.seed_users（订单按 username 找归属）。
 
 两条硬约束，改数据时别破坏：
 1. 可重复运行 —— 已存在的 order_no 直接跳过，不会出现第二份。
@@ -176,7 +176,7 @@ async def main() -> None:
                     if user_id is None:
                         raise RuntimeError(
                             f"Missing demo account: {spec.username}; "
-                            "run python -m supportflow.db.seed_users first"
+                            "run python -m supportflow.db.seed.seed_users first"
                         )
 
                     order = Order(

@@ -139,3 +139,66 @@ class OrderPage(BaseModel):
     total: int = Field(description="满足条件的总行数，与当前页无关")
     offset: int
     limit: int
+
+
+# ------------------------- 客户侧（"我的订单"） -------------------------
+#
+# 为什么不复用上面的 OrderBrief / OrderDetail？
+#
+# 因为那两个对象里有 `user_id` 和 `username` —— 那是**给管理员看归属**用的。
+# 客户看自己的订单，"归属"这一列恒等于他自己，给了纯属噪音；而且 service 为了
+# 填这两个字段还得白白 join 一次 users 表。接口结构该跟使用场景走，不是跟表走。
+
+
+class MyOrderBrief(BaseModel):
+    """客户侧列表行。没有 user_id / username —— 这单本来就是他的。"""
+
+    order_no: str
+    paid_amount_cents: int
+    payment_status: PaymentStatus
+    fulfillment_status: FulfillmentStatus
+    created_at: UtcInstant
+
+    @classmethod
+    def from_row(cls, order: Order) -> "MyOrderBrief":
+        return cls(
+            order_no=order.order_no,
+            paid_amount_cents=order.paid_amount_cents,
+            payment_status=order.payment_status,
+            fulfillment_status=order.fulfillment_status,
+            created_at=order.created_at,
+        )
+
+
+class MyOrderDetail(MyOrderBrief):
+    """客户侧详情 = 列表行 + 履约时间线 + 商品明细（沿用 `OrderItemOut`）。"""
+
+    paid_at: UtcInstantOrNull
+    shipped_at: UtcInstantOrNull
+    delivered_at: UtcInstantOrNull
+    tracking_no: str | None
+    items: list[OrderItemOut]
+
+    @classmethod
+    def from_row(cls, order: Order, items: list[OrderItem]) -> "MyOrderDetail":
+        return cls(
+            order_no=order.order_no,
+            paid_amount_cents=order.paid_amount_cents,
+            payment_status=order.payment_status,
+            fulfillment_status=order.fulfillment_status,
+            created_at=order.created_at,
+            paid_at=order.paid_at,
+            shipped_at=order.shipped_at,
+            delivered_at=order.delivered_at,
+            tracking_no=order.tracking_no,
+            items=[OrderItemOut.from_row(item) for item in items],
+        )
+
+
+class MyOrderPage(BaseModel):
+    """客户侧分页信封。字段名与 `OrderPage` 保持一致，前端一套解析逻辑通用。"""
+
+    items: list[MyOrderBrief]
+    total: int = Field(description="我的订单总行数，与当前页无关")
+    offset: int
+    limit: int

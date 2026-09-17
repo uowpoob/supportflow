@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter, Depends
 
-from supportflow.api.deps import get_current_user
+from supportflow.api.auth.deps import get_current_user
 from supportflow.models.entities import User
 from supportflow.schemas.login import LoginResponse
 from supportflow.schemas.result import Success

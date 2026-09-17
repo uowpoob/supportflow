@@ -7,7 +7,7 @@
 
 1. 前端向 `/api/login` 提交 username、password；Vite 代理为后端 `/login`。
 2. `schemas/login.py` 的 `LoginRequest` 校验输入：用户名长度 1～64 且不能全空白，密码不为空且 UTF-8 编码不超过 72 字节，多余字段拒绝。输入非法返回 422，尚不查询数据库。
-3. `api/login.py` 通过 `Depends(get_db)` 得到本次请求的数据库会话，调用 `services/login.py` 中的 `authenticate_user`。
+3. `api/auth/login.py` 通过 `Depends(get_db)` 得到本次请求的数据库会话，调用 `services/login.py` 中的 `authenticate_user`。
 4. 服务按用户名查 users，使用 bcrypt 核对输入密码与 password_hash，并检查 is_active。密码计算放在线程中，避免阻塞异步事件循环。用户不存在、密码错误或账号停用都返回同样的 401，不创建新会话。
 5. API 构造 `LoginResponse`，只选取 id、username、role，避免返回密码哈希。
 6. `create_login_session` 调用 `secrets.token_urlsafe(32)` 生成 32 字节安全随机数的 URL 安全编码，通常是 43 个字符；每次登录重新生成。token 不包含用户信息，也不是 JWT。

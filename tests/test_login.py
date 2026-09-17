@@ -32,7 +32,7 @@ class LoginTests(unittest.TestCase):
             yield self.db
 
         app.dependency_overrides[get_db] = override_db
-        self.settings_patch = patch("supportflow.api.login.auth_settings", AuthSettings(
+        self.settings_patch = patch("supportflow.api.auth.login.auth_settings", AuthSettings(
             _env_file=None, SESSION_TTL_SECONDS=3600, SESSION_COOKIE_SECURE=False,
         ))
         self.settings_patch.start()
@@ -111,7 +111,7 @@ class LoginTests(unittest.TestCase):
         self.assertEqual(self.db.commit.await_count, 2)
 
     def test_secure_cookie_configuration(self):
-        with patch("supportflow.api.login.auth_settings", AuthSettings(
+        with patch("supportflow.api.auth.login.auth_settings", AuthSettings(
             _env_file=None, SESSION_TTL_SECONDS=3600, SESSION_COOKIE_SECURE=True,
         )):
             response = self.login()
