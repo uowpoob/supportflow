@@ -1,6 +1,6 @@
 # SupportFlow
 
-用于学习和面试展示的智能售后工单 Agent。当前完成项目约定与最小 HTTP 服务，业务、Agent、检索和审批尚未实现。
+用于学习和面试展示的智能售后工单 Agent。当前已实现认证、角色依赖、订单种子及客户/管理员订单查询；退款、Agent、检索和审批仍待实现。最新检查与后续安排见 [开发计划](docs/plan-8-days.md)。
 
 ## 本地启动（Windows PowerShell）
 
@@ -33,17 +33,21 @@
 本地默认地址为 `127.0.0.1:3306`，数据库为 `agent_project`。
 真实密码只保存在被 Git 忽略的 `.env` 中。
 
-执行只读连接检查：
-
-```powershell
-& "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache run python -m supportflow.db.check
-```
-
-成功时输出数据库名和 `SELECT 1=1`，失败时退出码为 1。
+2026-09-17 核对：旧文档提到的 `supportflow.db.check` 模块当前不存在；本轮只读连接检查因缺少 `cryptography`、无法完成 MySQL SHA-2 认证而失败，需先补齐依赖后复核。
 连接模块位于 `src/supportflow/db/session.py`，使用 asyncmy 和 SQLAlchemy 异步连接池，
 提供 `AsyncSession` 类型的 `get_db` 会话依赖；业务层使用 `await session.execute(...)`
 和 `await session.commit()` 执行查询、显式提交事务。并发任务各用独立会话，
-不在等待模型回复或人工审批期间保持数据库事务。应用关闭时释放连接池。
+不在等待模型回复或人工审批期间保持数据库事务。
+
+## 前端
+
+项目中同时存在 `web/`（React）与 `web-vue/`（Vue）。Vue 版类型检查和生产构建已通过，开发服务器为 `http://127.0.0.1:5174`，当前代理目标为后端 8080 端口。联调 Vue 时在项目根目录运行：
+
+```powershell
+.venv/Scripts/python.exe -m uvicorn supportflow.main:app --host 127.0.0.1 --port 8080
+```
+
+另开终端执行 `cd web-vue`、`npm ci`（首次安装）、`npm run dev`。订单页面已接 API；退款申请和审批按钮尚未启用。仅构建通过不代表数据库和浏览器联调已完成。
 
 ## 文件的作用
 
@@ -59,6 +63,6 @@
 
 存储方案：MySQL 保存业务数据与会话归属，PostgreSQL 保存 LangGraph 状态，Milvus 保存政策索引。
 
-下一步：MySQL、数据库迁移、模拟用户与订单、带归属检查的订单查询接口。
+下一步：恢复 MySQL 连接，补齐认证与订单隔离验收，再实现退款资格、申请与进度查询。订单种子入口为 `python -m supportflow.db.seed.seed_orders`，依赖先运行用户种子 `python -m supportflow.db.seed.seed_users`。
 
 参考：[FastAPI 入门](https://fastapi.tiangolo.com/tutorial/first-steps/)、[uv 依赖管理](https://docs.astral.sh/uv/concepts/projects/dependencies/)。
