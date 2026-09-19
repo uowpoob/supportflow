@@ -2,7 +2,7 @@
 import { RouterView } from 'vue-router'
 
 import { useAuth } from './auth/useAuth'
-import AuthLoading from './components/AuthLoading.vue'
+import AuthLoading from './components/common/AuthLoading.vue'
 
 // 对应 React 版的 `RootRedirect` + `<Routes>`：
 // 分流逻辑搬进了 router.ts 的全局守卫，这里只剩"身份没确认完就先别渲染页面"。

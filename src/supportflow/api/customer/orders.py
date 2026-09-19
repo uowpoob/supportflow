@@ -1,6 +1,7 @@
 """客户订单接口：我的订单列表与详情，以及退款资格判定。"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from langchain_core import tools
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.api.auth.deps import require_customer

@@ -1,7 +1,6 @@
 # 登录流程：从密码验证到会话 Cookie
 
-当前已实现 `POST /login` 的输入校验、账号密码验证、会话写入、Cookie 下发。
-`GET /me`、后端权限检查、`POST /logout` 尚未实现，前端刷新仍暂用 sessionStorage。
+`POST /login`、`GET /me`、`POST /logout` 与路由角色准入均已实现；前端刷新时由 `/me` 向服务端恢复身份，不在浏览器里存任何登录态。
 
 ## 请求怎么经过各层
 
@@ -33,7 +32,7 @@ Cookie 名称为 `supportflow_session`：
 | SameSite | Lax，限制部分跨站请求携带 Cookie；并不替代完整的 CSRF 防护 |
 | Path | `/`，覆盖当前应用路径 |
 | Domain | 不设置，限定当前主机 |
-| Max-Age / Expires | 根据会话有效期设置；默认 24 小时 |
+| Max-Age / Expires | 根据会话有效期设置；默认 1 小时（3600 秒） |
 | Secure | 本地 HTTP 默认关闭，生产 HTTPS 必须开启 |
 
 前端请求封装已经设置 `credentials: 'include'`，不需要手动读取或保存 token。
@@ -43,21 +42,26 @@ Cookie 名称为 `supportflow_session`：
 `core/auth.py` 独立读取环境变量或项目 `.env`，不依赖模型服务密钥：
 
 ```dotenv
-SESSION_TTL_SECONDS=86400
+SESSION_TTL_SECONDS=3600
 SESSION_COOKIE_SECURE=false
 ```
 
 生产 HTTPS 将 `SESSION_COOKIE_SECURE` 改为 `true`，修改配置后重启后端。
-数据库的 expires_at 是后续认证的判断依据，不能只依赖浏览器的 Cookie 到期删除行为。
-现阶段退出按钮只清前端状态，尚不会撤销服务端会话；完成 `/logout` 后才具备真正退出能力。
+数据库的 `expires_at` 是认证的判断依据，不能只依赖浏览器的 Cookie 到期删除行为。
+退出由 `POST /logout` 完成：删掉库里那条会话记录，并下发一个过期的 `Set-Cookie` 让浏览器丢掉凭证，两件事缺一不可。
 
 ## 验证范围
 
 `tests/test_login.py` 用真实 HTTP 路由及密码校验、模拟数据库访问，覆盖成功登录、未知用户、错误密码、禁用账号、非法输入、提交失败、不同登录生成不同 token、Cookie 属性和响应文档结构。
-现有模型测试验证会话表约束。另已通过临时账号执行真实 MySQL 与 ASGI HTTP 客户端联调，验证成功响应、Cookie 保存、会话哈希及用户关联；临时数据由外层事务回滚。该联调不等于浏览器界面测试。
+
+`tests/test_api_acceptance.py`（2026-09-18 新增）**不覆盖 `get_current_user`** —— 每个请求都真的带 Cookie 走一遍 `resolve_session`，因为那条依赖本身就是验收对象：`/me` 从 Cookie 恢复身份；四种失败（没带 / 伪造 / 过期 / 停用）返回逐字相同的 401；退出后旧 Cookie 重放失效；角色错误 403 与未登录 401 分开；两个客户互相看不到对方的订单；别人的订单与不存在的订单返回同一个 404；分页越界值被 422 挡下。数据库用内存 SQLite，HTTP 与业务两层都是真的。
+
+已知限制：登录失败的响应统一成 401，但"用户不存在"与"密码错误"在**耗时**上仍有差别（账号枚举的时序侧信道），尚未处理。
 
 运行自动化测试：
 
 ```powershell
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
+
+或 `uv run pytest -q`。

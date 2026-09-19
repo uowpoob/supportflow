@@ -24,6 +24,8 @@ dependencies = [
     "python-multipart>=0.0.32",
     "passlib>=1.7.4",
     "cryptography>=50.0.1",
+    "langchain-core>=1.6.3",
+    "ipython>=9.17.1",
 ]
 
 [project.scripts]
