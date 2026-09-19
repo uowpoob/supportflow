@@ -39,6 +39,12 @@ class Settings(DatabaseSettings):
     LANGSMITH_API_KEY: str
     LANGSMITH_PROJECT: str
 
+    # LangGraph 对话记忆（checkpoint）用的 PostgreSQL 连接串，跑在 Docker 里。
+    # 与业务库 MySQL 分开：MySQL 存业务数据并负责归属校验，Postgres 只存对话历史，
+    # 两边靠 thread_id（= conversations 表的主键）关联，没有跨库外键。
+    # 给个空默认值：本机没起 Postgres 时，只要不去建 checkpointer 就不会报错。
+    LANGGRAPH_PG_DSN: str = ""
+
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",

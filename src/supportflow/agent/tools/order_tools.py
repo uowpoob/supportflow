@@ -4,6 +4,7 @@
 """
 
 from datetime import datetime
+from http.cookiejar import offset_from_tz_string
 
 from langchain_core.tools import tool
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,7 @@ _FULFILLMENT_CN = {
     FulfillmentStatus.DELIVERED: "已签收",
 }
 
-_LIST_LIMIT=10
+
 
 
 
@@ -61,13 +62,14 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
             ]
         )
 
+
     @tool
     async def list_my_orders() -> str:
         """当用户想知道自己有哪些订单时调用，比如"我都有啥订单""我买了什么"
         "我的订单列表"。不需要任何参数 —— 只会返回当前登录用户自己的订单，
         不含其他客户的数据。"""
         orders, total = await order_service.list_orders_for_user(
-            db, user_id, offset=0, limit=_LIST_LIMIT
+            db, user_id, offset=0 , limit=10
         )
         if not orders:
             return "你名下还没有任何订单。"
@@ -105,7 +107,7 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
         """
         当用户询问有关商品信息时调用，如果用户未指明提供订单号就从所有订单号中挨个查询，所有订单
         order_no是订单号 ，查询后解析返回的商品名和型号判断是否是用户询问的商品，可能查询到多个商品信息，如果有询问用户具体指哪一个，
-        如果用户说不是这个的话 说明在调用查询订单信息的方法中最大查询的数目不包括用户所指定的商品订单，那么再次调用查询订单工具，此时offset要等于limit
+        如果用户说不是这个的话 说明在调用查询订单信息的方法中最大查询的数目不包括用户所指定的商品订单
         """
         found = await order_service.get_order_with_items_for_user(db, user_id, order_no)
         if found is None:

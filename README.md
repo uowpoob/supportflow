@@ -8,11 +8,16 @@
 
 ```powershell
 & "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache sync --locked
-& "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080 --reload
+& "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080 --loop asyncio:SelectorEventLoop
 ```
 
 端口用 **8080**：`python -m supportflow` 内置的 8000 在本机绑不上（WinError 10013，
 8000 落在 Windows `winnat` 的保留段里，不是有残留进程占着），前端 vite 的代理目标也是 8080。
+
+`--loop asyncio:SelectorEventLoop` 不能省：Agent 的对话记忆存在 PostgreSQL，
+连它的驱动 psycopg 跑不了 Windows 默认的 ProactorEventLoop。uvicorn 自己创建事件循环，
+所以在启动脚本里设 `set_event_loop_policy` 是没用的，只能从命令行或 `uvicorn.run(...)` 传。
+（`--reload` 也能跑通，但那是它在 reload 模式下换循环的副作用，生产不开 reload，别指望它。）
 
 访问 http://127.0.0.1:8080/health，预期返回：
 

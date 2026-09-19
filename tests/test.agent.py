@@ -1,23 +1,17 @@
 """跑一遍订单 Agent，看每一轮它到底干了什么。
 
 在 PyCharm 里直接右键 Run 这个文件就行，不需要开后端服务（脚本直接连数据库）。
-
-需要的是：MySQL 在跑。
-
-用的是 stream_mode="updates"：每跑完一个节点吐一次，只给"这一步改了什么"。
-正常一轮是 model → tools → model 三次；如果只看到 model 一次，
-说明模型压根没调工具（去看 prompt/system.py 里的范围句）。
 """
 
 import asyncio
-
-from langgraph.checkpoint.memory import InMemorySaver
-
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from supportflow.agent.order_agent import build_order_agent
+from supportflow.core.config import settings
 from supportflow.db.session import SessionLocal
 
 USER_ID = 4
-CONFIG = {"configurable": {"thread_id": "demo-1"}}
+THREAD_ID = "demo-1"
+CONFIG = {"configurable": {"thread_id": THREAD_ID}}
 
 QUESTIONS = [
     "我都有啥订单",
@@ -48,24 +42,31 @@ def show(update: dict) -> None:
 
 
 async def main() -> None:
-    # 1. 开一个数据库会话
-    async with SessionLocal() as db:
-        # 2. 造图：把「谁能看哪些数据」钉在这一步
-        graph = build_order_agent(db, USER_ID, checkpointer=InMemorySaver())
+    # 1. 连上 Postgres。from_conn_string 要用 async with 包起来，
+    #    出了这个块连接自动关掉，不会泄漏连接。
+    async with AsyncPostgresSaver.from_conn_string(settings.LANGGRAPH_PG_DSN) as saver:
+        # 2. setup() 负责那 4 张记忆表：没有就建，版本旧就升级。
+        #    表已经在了的时候它就是空转，重复调用无害。
+        await saver.setup()
 
-        # 3. 一句一句问
-        for question in QUESTIONS:
-            print(f"\n{'=' * 48}\n我 > {question}")
+        # 3. 开一个业务库（MySQL）的会话
+        async with SessionLocal() as db:
+            # 4. 造图：「谁能看哪些数据」钉在这一步，「记忆存哪」交给 saver
+            graph = build_order_agent(db, USER_ID, checkpointer=saver)
 
-            # 注意：updates / values 模式一次只吐一个东西，所以是一个变量。
-            # （messages 模式才是两个：chunk, info）
-            async for update in graph.astream(
-                    {"messages": [{"role": "user", "content": question}]},
-                    CONFIG,
-                    stream_mode="updates",
-            ):
-                show(update)
+            # 5. 一句一句问
+            for question in QUESTIONS:
+                print(f"\n{'=' * 48}\n我 > {question}")
+
+                # 注意：updates / values 模式一次只吐一个东西，所以是一个变量。
+                # （messages 模式才是两个：chunk, info）
+                async for update in graph.astream(
+                        {"messages": [{"role": "user", "content": question}]},
+                        CONFIG,
+                        stream_mode="updates",
+                ):
+                    show(update)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(),loop_factory=asyncio.SelectorEventLoop)
