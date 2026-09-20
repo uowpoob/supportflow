@@ -1,6 +1,8 @@
 # 售后总图骨架
 
-当前只定义节点接口和连线，业务节点均显式抛出 `NotImplementedError`。可以编译和画图，尚不能执行业务对话；未接入 HTTP 路由。
+意图路由已接入模型结构化输出，返回 `current_intent` 和 `next_node`，由条件边分流。
+其余业务节点仍显式抛出 `NotImplementedError`，尚不能执行完整业务对话；未接入 HTTP 路由。
+目前路由只识别意图和分配处理者，订单确认、原因提取、取消及换单清理仍需在后续节点实现。
 
 下图由 `build_support_graph().get_graph().draw_mermaid()` 生成，虚线表示条件分支。
 
@@ -44,7 +46,7 @@ graph TD;
 
 | 节点 | 职责 |
 | --- | --- |
-| understand_and_route | 理解输入、更新意图和办理进度、选择下一节点 |
+| understand_and_route | 结合历史和进度识别意图、设置处理目的、选择下一节点 |
 | order_agent | 包装订单 Agent，定位订单并决定是否交接 |
 | refund_agent | 包装退款 Agent，查询、追问或提交后结束本轮 |
 | prepare_knowledge | 准备问题、检查必要信息、清空旧证据 |

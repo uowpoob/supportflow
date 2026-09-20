@@ -1,4 +1,4 @@
-"""售后总图连线；可编译和画图，业务节点仍是显式占位实现。"""
+"""售后总图连线；意图路由已实现，其余业务节点仍是显式占位实现。"""
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph

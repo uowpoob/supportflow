@@ -1,4 +1,4 @@
-"""总图节点接口，当前只定义职责和输入输出，后续逐个实现。
+"""售后总图节点；意图路由已实现，其余节点后续逐个实现。
 
 LangGraph 将完整 State 传给节点，通过 Runtime 注入本次 Context：
     context = runtime.context
@@ -6,27 +6,93 @@ LangGraph 将完整 State 传给节点，通过 Runtime 注入本次 Context：
     order = state["order"]
 返回 SupportStateUpdate，只更新需要变动的顶层字段，不原地修改 State。
 
-占位节点明确抛出 NotImplementedError，避免把空实现误当成业务成功。
-本模块不初始化模型、不连接数据库，也不新增 Knowledge Agent。
+未实现节点明确抛出 NotImplementedError，避免把空实现误当成业务成功。
+仅在执行意图路由时加载模型客户端；导入和画图不初始化模型或连接数据库。
 """
 
+import json
+
+from langchain_core.messages import SystemMessage
 from langgraph.runtime import Runtime
 
 from supportflow.agents.graph.context import SupportContext
-from supportflow.agents.graph.state import SupportState, SupportStateUpdate
+from supportflow.agents.graph.state import SupportState, SupportStateUpdate, initial_state
+from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
+from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
+
+
+def _get_router_model():
+    # 延迟导入：编译总图、画图和离线测试无需模型密钥。
+    from supportflow.agents.llm import client
+
+    return client.with_structured_output(UnderstandAndRouteOutput)
 
 
 async def understand_and_route(
     state: SupportState, runtime: Runtime[SupportContext],
 ) -> SupportStateUpdate:
-    """结合新消息、历史和办理进度，更新意图与用户补充的信息。
+    """结合历史和办理进度识别意图，返回 State 更新，由总图条件边分流。
 
-    “对”“不喜欢”等短回复应结合上一轮问题理解；咨询政策时保留退款进度，
-    换订单或取消时清理相应旧状态。每轮重新设置 next_node，不能沿用旧路由。
-    出口：order_agent / refund_agent / prepare_knowledge / clarify / end。
+    这一阶段只判断意图、处理目的和出口。订单确认、换单清理、退款原因提取
+    以及取消操作，留给后续业务节点处理，不从分类结果伪造这些业务事实。
     """
     context = runtime.context
-    raise NotImplementedError("待实现：理解输入与意图路由")
+    if not state.get("messages"):
+        raise ValueError("意图路由需要非空的 messages")
+
+    defaults = initial_state()
+    current = {**defaults, **state}
+    progress = {key: current[key] for key in (
+        "current_intent", "order", "refund", "knowledge",
+    )}
+    router_model = _get_router_model()
+    result = await router_model.ainvoke([
+        SystemMessage(content=ROUTING_SYSTEM_PROMPT),
+        SystemMessage(content="当前办理进度：\n" + json.dumps(progress, ensure_ascii=False)),
+        *state["messages"],
+    ])
+    # Pydantic schema 对应的 with_structured_output 返回模型实例，用属性读取。
+    intent = result.intent
+    next_node = result.next_node
+
+    # 模型负责语义判断，代码约束合法的业务入口。
+    if intent == "unknown":
+        next_node = "clarify"
+    elif next_node != "clarify":
+        if intent == "order_query":
+            next_node = "order_agent"
+        elif intent == "refund_query":
+            next_node = "refund_agent"
+        elif intent == "refund_request":
+            has_order = current["refund"]["order_no"] or current["order"]["selected_order_no"]
+            # 候选订单还未确认时不能跳过定位；已有订单时仍允许用户换单去订单节点。
+            if not has_order or next_node == "order_agent":
+                next_node = "order_agent"
+            else:
+                next_node = "refund_agent"
+        elif next_node != "order_agent":
+            next_node = "prepare_knowledge"
+
+    # 支持新会话只传 messages；已有 checkpoint 字段不重置。
+    updates: SupportStateUpdate = {
+        key: value for key, value in defaults.items()
+        if key not in state and key != "messages"
+    }
+    updates.update(current_intent=intent, next_node=next_node)
+    if next_node == "order_agent":
+        purpose = (
+            "refund" if intent == "refund_request"
+            else "knowledge" if intent in ("product_support", "policy_question")
+            else "order_query"
+        )
+        updates["order"] = {**current["order"], "purpose": purpose}
+    if intent in ("product_support", "policy_question"):
+        updates["knowledge"] = {
+            **current["knowledge"],
+            "topic": "product_support" if intent == "product_support" else "policy",
+        }
+        updates["retrieved_documents"] = []
+    return updates
 
 
 async def order_agent(
