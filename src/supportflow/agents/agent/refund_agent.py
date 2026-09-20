@@ -5,12 +5,12 @@ from supportflow.agents.llm import client
 from supportflow.agents.prompt.system import  REFUND_AGENT_SYSTEM_PROMPT
 from supportflow.agents.tools.refund_tools import build_refund_tools
 
-def build_refund_agent(db: AsyncSession,user_id: int, *, checkpointer=None) :
+def build_refund_agent(db: AsyncSession,user_id: int,conversion_id : str, *, checkpointer=None ) :
 
 
     return create_agent(
         model=client,
         system_prompt=REFUND_AGENT_SYSTEM_PROMPT,
         checkpointer = checkpointer,
-        tools=build_refund_tools(db, user_id)
+        tools=build_refund_tools(db, user_id, conversion_id),
         )

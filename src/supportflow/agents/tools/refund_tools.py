@@ -3,14 +3,12 @@ from datetime import datetime
 from langchain_core.tools import tool
 from sqlalchemy.ext.asyncio import AsyncSession
 from supportflow.services import refunds as refund_service
-from supportflow.services.refunds import list_refund_requests_for_user
-
 from supportflow.models.enums import (
     ApprovalDecision,
     RefundExecutionStatus,
     RefundStatus,
 )
-
+from supportflow.services.refunds import create_refund_request
 
 _REFUND_CN = {
     RefundStatus.PENDING: "待审批",
@@ -40,7 +38,7 @@ def _refund_line(row) -> str:
     )
 
 
-def build_refund_tools(db : AsyncSession,user_id:int)->list:
+def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->list:
     @tool
     async def list_my_refunds(status: RefundStatus | None = None) -> str:
         """当用户想看自己的退款申请时调用，比如"我的退款申请""我申请退款了没"
@@ -129,5 +127,16 @@ def build_refund_tools(db : AsyncSession,user_id:int)->list:
         return "\n".join(lines)
 
 
+    @tool
+    async def post_refund(order_no: str, reason: str) -> str:
+        """用户明确要求提交退款，且订单号和原因齐全时调用。"""
+        request = await create_refund_request(
+            db,
+            user_id,
+            order_no=order_no,
+            reason=reason,
+            conversation_id=conversation_id,
+        )
+        return f"申请编号：{request.request_key}，状态：{request.status.value}"
     
-    return [list_my_refunds, get_refund_detail, get_refund_eligibility]
+    return [list_my_refunds, get_refund_detail, get_refund_eligibility,post_refund]

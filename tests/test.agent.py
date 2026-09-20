@@ -13,10 +13,10 @@ from supportflow.db.session import SessionLocal
 USER_ID = 4
 THREAD_ID = "demo-1"
 CONFIG = {"configurable": {"thread_id": THREAD_ID}}
-
+conversation_id="test-1"
 QUESTIONS = [
-    "你好",
-    "我想看下所有退款记录详情"
+    "我想看下所有退款记录",
+    "哪些订单可以退款"
 
 ]
 
@@ -49,11 +49,12 @@ async def main() -> None:
         # 2. setup() 负责那 4 张记忆表：没有就建，版本旧就升级。
         #    表已经在了的时候它就是空转，重复调用无害。
         await saver.setup()
+        await saver.adelete_thread(THREAD_ID)
 
         # 3. 开一个业务库（MySQL）的会话
         async with SessionLocal() as db:
             # 4. 造图：「谁能看哪些数据」钉在这一步，「记忆存哪」交给 saver
-            graph = build_refund_agent(db, USER_ID, checkpointer=saver)
+            graph = build_refund_agent(db, USER_ID,conversation_id, checkpointer=saver)
 
             # 5. 一句一句问
             for question in QUESTIONS:
