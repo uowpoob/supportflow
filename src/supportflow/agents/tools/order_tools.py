@@ -68,8 +68,10 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
         """当用户想知道自己有哪些订单时调用，比如"我都有啥订单""我买了什么"
         "我的订单列表"。不需要任何参数 —— 只会返回当前登录用户自己的订单，
         不含其他客户的数据。"""
+        # limit 故意给 50 而不是 10：客户订单常有十几笔，少给的那几笔
+        # 模型**根本看不见**（它会从单号断档去猜），而它没有翻页的能力。
         orders, total = await order_service.list_orders_for_user(
-            db, user_id, offset=0 , limit=10
+            db, user_id, offset=0 , limit=50
         )
         if not orders:
             return "你名下还没有任何订单。"
@@ -80,26 +82,7 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
             lines.append(f"（只列出最近 {len(orders)} 笔）")
         return "\n".join(lines)
 
-    @tool
-    async def get_refund_eligibility(order_no: str) -> str:
-        """当用户问某笔订单"能不能退款""还能退吗""退款截止到几号"时调用。
-        order_no 是订单号，形如 A1001，不是用户 ID。只看资格，不会真的提交申请。"""
-        found = await refund_service.check_refund_eligibility(db, user_id, order_no)
-        if found is None:
-            return f"没有找到订单 {order_no}。"
 
-        _, eligibility = found
-        head = "可以申请退款" if eligibility.eligible else "不能申请退款"
-        lines = [f"- 订单 {order_no}：{head}｜{eligibility.message}"]
-        if eligibility.eligible:
-            lines.append(f"- 可退金额 {eligibility.amount_cents} 分")
-        if eligibility.delivered_at is not None:
-            lines.append(f"- 签收时间 {_fmt(eligibility.delivered_at)}")
-        if eligibility.window_ends_at is not None:
-            lines.append(f"- 退款期限截止 {_fmt(eligibility.window_ends_at)}")
-        if eligibility.existing_request_key is not None:
-            lines.append(f"- 已有一条退款申请 {eligibility.existing_request_key}")
-        return "\n".join(lines)
 
 
     @tool
@@ -123,5 +106,5 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
         return "\n".join(lines)
 
 
-    return [get_order_detail, list_my_orders, get_refund_eligibility, get_order_item]
+    return [get_order_detail, list_my_orders,  get_order_item]
 

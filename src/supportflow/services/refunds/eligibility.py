@@ -3,16 +3,18 @@
 规则本身（`evaluate_eligibility`）是**纯函数**，不碰数据库；查询
 （`check_refund_eligibility`）负责把订单和当前占名额的申请取出来喂给它。
 两者分开放，是为了让规则可以被单元测试直接覆盖 —— 不用造数据库、不用起服务。
+
+SQL 都在 `repository/refund/eligibility.py`，这一层只决定"要查什么、查出来怎么判"。
 """
 
 from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.db.base import utc_now
 from supportflow.models.entities import Order, RefundRequest
-from supportflow.models.enums import FulfillmentStatus, PaymentStatus, RefundStatus
+from supportflow.models.enums import FulfillmentStatus, PaymentStatus
+from supportflow.repository.refund import eligibility as refund_repo
 from supportflow.services.refunds.types import (
     ACTIVE_REQUEST_STATUSES,
     REFUND_WINDOW,
@@ -114,18 +116,16 @@ def _deny(order: Order, code: str, message: str, now: datetime) -> Eligibility:
 async def _active_request(db: AsyncSession, order_id: int) -> RefundRequest | None:
     """该订单当前那条"占名额"的申请，没有就是 None。
 
-    数据库有 `active_order_id` 唯一约束保证最多一条，所以这里不需要 ORDER BY ——
+    哪些状态算"占名额"是**本层的规则**（`ACTIVE_REQUEST_STATUSES`），所以由这里
+    传给 repository —— 数据访问层不认识业务概念，也不该认识。
+
+    数据库有 `active_order_id` 唯一约束保证最多一条，所以不需要 ORDER BY ——
     真要查出两行，那是约束被人删了，属于该炸的情况。
 
     前缀是下划线，但 `requests.py` 也要用它（幂等分支要回读那条申请）——
     同包内互相借用私有函数是可以的，它没有对外暴露成公开 API。
     """
-    return await db.scalar(
-        select(RefundRequest).where(
-            RefundRequest.order_id == order_id,
-            RefundRequest.status.in_(ACTIVE_REQUEST_STATUSES),
-        )
-    )
+    return await refund_repo.find_request_in_statuses(db, order_id, ACTIVE_REQUEST_STATUSES)
 
 
 async def check_refund_eligibility(
@@ -135,13 +135,11 @@ async def check_refund_eligibility(
 ) -> tuple[Order, Eligibility] | None:
     """判定入口：订单不存在或不属于当前用户一律返回 `None`。
 
-    归属条件（`Order.user_id == user_id`）和订单号写在**同一个 where** 里，
-    跟订单详情一个套路 —— 两种失败天然都是 None，调用方无从区分，
-    也就无从用它来探测"某个订单号是否真实存在"。
+    归属条件（`Order.user_id == user_id`）和订单号写在**同一个 where** 里
+    （就在 repository 那条查询里），跟订单详情一个套路 —— 两种失败天然都是 None，
+    调用方无从区分，也就无从用它来探测"某个订单号是否真实存在"。
     """
-    order = await db.scalar(
-        select(Order).where(Order.order_no == order_no, Order.user_id == user_id)
-    )
+    order = await refund_repo.find_order_for_user(db, user_id, order_no)
     if order is None:
         return None
 

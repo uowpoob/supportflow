@@ -9,18 +9,32 @@
 1. **身份只从调用方传进来。** 这里的 `user_id` / `admin_id` 参数全部由认证态提供，
    函数内部没有任何地方会去读请求体里的身份字段。
 2. **无权限与不存在返回同一种结果。** 归属条件全部塞进 `where`，
-   查不到就是 `None`，由路由层统一翻成同一个 404 —— 见 `services/orders.py` 里那段说明。
+   查不到就是 `None`，由路由层统一翻成同一个 404 —— 见
+   `repository/order/queries.py` 里那段说明。
+
+## SQL 不在这里
+
+所有查库语句在 `repository/refund/`，查库返回的形状在 `repository/refund/types.py`。
+这一层只判规则、定事务边界：
+
+    api/ · agents/  →  services/refunds/（规则）  →  repository/refund/（SQL）  →  models/
+
+所以**改查询去 repository，改规则来这里**。判断标准一句话：
+"向数据库要什么"属于那边，"拿到之后怎么判断"属于这边。
 
 ## 目录分工（按"业务做什么"拆，不是按"谁调用"拆）
 
 | 模块 | 装什么 |
 | --- | --- |
 | `errors.py` | `RefundError`（每个子模块都要用，所以单独一层） |
-| `types.py` | 领域类型与不变量常量：`Eligibility` / `RefundRequestRow` / `RefundRequestView` / 窗口天数 |
-| `eligibility.py` | 资格规则（纯函数）+ 资格查询 |
+| `types.py` | 领域不变量与判定结果：`Eligibility` / 窗口天数 / `ACTIVE_REQUEST_STATUSES` |
+| `eligibility.py` | 资格规则（纯函数）+ 资格查询编排 |
 | `requests.py` | 提交申请、关联会话、并发防重 |
 | `approvals.py` | 人工审批、执行前复核、模拟退款 |
-| `queries.py` | 申请列表/详情、审批记录、退款流水，外加两个事务原语 |
+| `queries.py` | 读操作入口（转发到 repository，保持调用方 import 不变） |
+
+`RefundRequestRow` / `RefundRequestView` 的名字仍然从 `types.py` 导出（实际定义已搬到
+`repository/refund/types.py`），所以 `schemas/refunds/` 那边不用改。
 
 **为什么不按 customer / admin 拆？** 因为"谁调用"是 `api/` 的事（那里 URL 和鉴权
 确实不同），而这一层两边共用的是最不能复制的那部分：`RefundError`、资格规则、

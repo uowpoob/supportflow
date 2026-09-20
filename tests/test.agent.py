@@ -5,7 +5,8 @@
 
 import asyncio
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from supportflow.agent.order_agent import build_order_agent
+from supportflow.agents.agent.order_agent import build_order_agent
+from supportflow.agents.agent.refund_agent import build_refund_agent
 from supportflow.core.config import settings
 from supportflow.db.session import SessionLocal
 
@@ -14,9 +15,9 @@ THREAD_ID = "demo-1"
 CONFIG = {"configurable": {"thread_id": THREAD_ID}}
 
 QUESTIONS = [
-    "我都有啥订单",
-    "我买的充电宝还能退款吗",
-    "不是"
+    "你好",
+    "我想看下所有退款记录详情"
+
 ]
 
 
@@ -52,7 +53,7 @@ async def main() -> None:
         # 3. 开一个业务库（MySQL）的会话
         async with SessionLocal() as db:
             # 4. 造图：「谁能看哪些数据」钉在这一步，「记忆存哪」交给 saver
-            graph = build_order_agent(db, USER_ID, checkpointer=saver)
+            graph = build_refund_agent(db, USER_ID, checkpointer=saver)
 
             # 5. 一句一句问
             for question in QUESTIONS:

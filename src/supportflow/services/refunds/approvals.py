@@ -1,23 +1,27 @@
 """人工审批与模拟退款：行锁串行化、相同决策幂等、执行前复核。
 
 "批准"和"退款"在同一个事务里完成，不允许出现"批准了但没退款"的中间态。
+
+SQL 在 `repository/refund/approvals.py`（带行锁的那两条也是），事务原语在
+`repository/refund/transaction.py`；这一层保留的是**决策规则**：
+什么情况算重复、什么情况该报 409、执行前要不要复核。
 """
 
 from uuid import uuid4
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.db.base import utc_now
-from supportflow.models.entities import Order, RefundApproval, RefundRecord, RefundRequest
+from supportflow.models.entities import RefundRequest
 from supportflow.models.enums import (
     ApprovalDecision,
     PaymentStatus,
     RefundExecutionStatus,
     RefundStatus,
 )
+from supportflow.repository.refund import approvals as approval_repo
+from supportflow.repository.refund.transaction import _end_transaction, _reload
 from supportflow.services.refunds.errors import RefundError
-from supportflow.services.refunds.queries import _end_transaction, _reload
 
 
 async def decide_refund_request(
@@ -47,12 +51,10 @@ async def decide_refund_request(
     "模拟退款"只是写一行记录加改两个字段，没有外部系统，不存在
     "钱退了但状态没改"的中间窗口。
     """
-    # `with_for_update` = `SELECT ... FOR UPDATE`：把这一行锁住直到事务结束。
+    # 这一条查询带 `SELECT ... FOR UPDATE`（行锁）：把这一行锁住直到事务结束。
     # 十个并发批准会在这里排队，第一个改完状态，后面九个进来一看已经批准，
     # 走幂等分支返回 —— 这正是"并发批准只产生一条流水"的实现方式。
-    request = await db.scalar(
-        select(RefundRequest).where(RefundRequest.request_key == request_key).with_for_update()
-    )
+    request = await approval_repo.lock_request_by_key(db, request_key)
     if request is None:
         raise RefundError("request_not_found", "退款申请不存在", status_code=404)
 
@@ -70,18 +72,18 @@ async def decide_refund_request(
         # 决策相同 → 幂等返回，不再插审批行、不再产生流水。
         # 但**必须结束事务再重读**：上面那句 `FOR UPDATE` 读的是最新版本，
         # 而这次没提交，调用方接下来的普通 SELECT 还会用旧快照
-        # （详见 `queries._end_transaction` 的长注释）。这是并发批准返回旧状态的根因。
+        # （详见 `repository/refund/transaction.py` 的长注释）。
+        # 这是并发批准返回旧状态的根因。
         await _end_transaction(db)
         return await _reload(db, request)
 
-    db.add(
-        RefundApproval(
-            refund_request_id=request.id,
-            # admin_id 只从认证态来 —— 接口上没有这个参数，伪造不了。
-            admin_id=admin_id,
-            decision=decision,
-            comment=comment,
-        )
+    await approval_repo.insert_approval(
+        db,
+        refund_request_id=request.id,
+        # admin_id 只从认证态来 —— 接口上没有这个参数，伪造不了。
+        admin_id=admin_id,
+        decision=decision,
+        comment=comment,
     )
 
     if not want_approve:
@@ -107,9 +109,7 @@ async def _execute_mock_refund(db: AsyncSession, request: RefundRequest) -> None
     订单金额可能被改、可能已经别处退过款。审批人点的是"批准这条申请"，
     不是"无条件给钱" —— 依据变了就该拦下来，而不是照旧执行。
     """
-    order = await db.scalar(
-        select(Order).where(Order.id == request.order_id).with_for_update()
-    )
+    order = await approval_repo.lock_order_by_id(db, request.order_id)
     if order is None:
         raise RefundError("order_not_found", "订单不存在", status_code=404)
 
@@ -125,16 +125,15 @@ async def _execute_mock_refund(db: AsyncSession, request: RefundRequest) -> None
             "订单实付金额已变化，与申请金额不一致，请人工核对后再处理",
         )
 
-    db.add(
-        RefundRecord(
-            refund_request_id=request.id,
-            refund_no=str(uuid4()),
-            amount_cents=request.amount_cents,
-            status=RefundExecutionStatus.SUCCEEDED,
-            attempt_count=1,
-            last_error=None,
-            succeeded_at=utc_now(),
-        )
+    await approval_repo.insert_record(
+        db,
+        refund_request_id=request.id,
+        refund_no=str(uuid4()),
+        amount_cents=request.amount_cents,
+        status=RefundExecutionStatus.SUCCEEDED,
+        attempt_count=1,
+        last_error=None,
+        succeeded_at=utc_now(),
     )
     order.payment_status = PaymentStatus.REFUNDED
     request.status = RefundStatus.REFUNDED

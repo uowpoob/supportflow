@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from supportflow.agent.checkpointer import open_checkpointer
+from supportflow.agents.checkpointer import open_checkpointer
 from supportflow.api.router import api_router
 
 

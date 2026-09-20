@@ -4,9 +4,9 @@
 from langchain.agents import create_agent
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from supportflow.agent.llm import client
-from supportflow.agent.prompt.system import ORDER_AGENT_SYSTEM_PROMPT
-from supportflow.agent.tools.order_tools import build_order_tools
+from supportflow.agents.llm import client
+from supportflow.agents.prompt.system import ORDER_AGENT_SYSTEM_PROMPT
+from supportflow.agents.tools.order_tools import build_order_tools
 
 
 
