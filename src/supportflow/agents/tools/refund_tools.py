@@ -61,7 +61,7 @@ def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->lis
     async def get_refund_detail(request_key: str) -> str:
         """当用户想了解某一条退款申请办到哪一步时调用，比如"我那笔退款到哪了"
         "批了吗""钱到账没"。request_key 是申请编号，从 list_my_refunds 的结果里取，
-        不是订单号（订单号形如 A1001）。不需要用户 ID —— 只能看当前登录用户自己的申请。"""
+        不是订单号（订单号是 16 位数字）。不需要用户 ID —— 只能看当前登录用户自己的申请。"""
         view = await refund_service.get_refund_request_for_user(
             db, user_id, request_key
         )
@@ -108,7 +108,7 @@ def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->lis
     @tool
     async def get_refund_eligibility(order_no: str) -> str:
         """当用户问某笔订单"能不能退款""还能退吗""退款截止到几号"时调用。
-        order_no 是订单号，形如 A1001，不是用户 ID。只看资格，不会真的提交申请。"""
+        order_no 是订单号，16 位数字（例如 1260918430020001），不是用户 ID。只看资格，不会真的提交申请。"""
         found = await refund_service.check_refund_eligibility(db, user_id, order_no)
         if found is None:
             return f"没有找到订单 {order_no}。"

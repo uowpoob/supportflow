@@ -2,7 +2,7 @@ from langchain.chat_models import init_chat_model
 from supportflow.core.config import settings
 
 
-client = init_chat_model(
+chat_model = init_chat_model(
     model=settings.DEEPSEEK_MODEL,
     model_provider="deepseek",
     api_key=settings.DEEPSEEK_API_KEY,
@@ -12,5 +12,5 @@ client = init_chat_model(
 
 
 if __name__ == "__main__":
-    response=client.invoke("hello")
+    response=chat_model.invoke("hello")
     print(response.content)

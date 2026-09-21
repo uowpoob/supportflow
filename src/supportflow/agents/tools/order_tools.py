@@ -50,7 +50,7 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
     @tool
     async def get_order_detail(order_no: str) -> str:
         """当用户想知道某个订单的状态、金额或签收时间时调用。
-        order_no 是订单号，形如 A1001，不是用户 ID。"""
+        order_no 是订单号，16 位数字（例如 1260918430020001），不是用户 ID。"""
         order = await order_service.get_order_for_user(db, user_id, order_no)
         if order is None:
             return f"没有找到订单 {order_no}。"
