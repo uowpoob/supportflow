@@ -27,7 +27,7 @@ def make_order(**changes) -> Order:
     一旦失败，原因不需要再猜。没有数据库，对象只是内存里的值对象。
     """
     defaults = dict(
-        order_no="A1001",
+        order_no="1260918430020001",
         user_id=1,
         paid_amount_cents=29900,
         payment_status=PaymentStatus.PAID,
@@ -37,7 +37,7 @@ def make_order(**changes) -> Order:
     return Order(**{**defaults, **changes})
 
 
-def make_active_request(key: str = "demo-rq-A1001") -> RefundRequest:
+def make_active_request(key: str = "4099285177330001") -> RefundRequest:
     """一条"占着名额"的申请（待审批）。纯函数只读它的 `request_key`。"""
     return RefundRequest(
         request_key=key, order_id=1, conversation_id="demo-chat",

@@ -4,23 +4,28 @@
 否则两边用的模型或维度不一致，算出来的相似度没有任何意义。
 """
 
-from langchain_core.embeddings import Embeddings
+from functools import cache
 
-from supportflow.core.config import settings
+from langchain_core.embeddings import Embeddings
 
 # text-embedding-v4 单次最多 10 条，超过会被接口直接拒掉。
 BATCH_SIZE = 10
 
 
-def get_embedding_model() -> Embeddings:
-    """造向量模型对象。第一次调用才真正创建，import 本模块不会连网。"""
+@cache
+def _get_embedding_model() -> Embeddings:
+    """首次使用时创建并复用向量客户端，不连带初始化聊天模型。"""
     from langchain.embeddings import init_embeddings
+
+    from supportflow.core.config import settings
 
     return init_embeddings(
         model=settings.EMBEDDING_MODEL,
         provider="openai",
         api_key=settings.DASHSCOPE_API_KEY.get_secret_value(),
         base_url=settings.DASHSCOPE_BASE_URL,
+        dimensions=settings.EMBEDDING_DIM,
+        chunk_size=BATCH_SIZE,
         check_embedding_ctx_length=False,
     )
 
@@ -30,15 +35,14 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    model = get_embedding_model()
-    vectors: list[list[float]] = []
-    # 逐批串行发，不并发：灌库是一次性动作，慢一点没关系，出问题好定位。
-    for start in range(0, len(texts), BATCH_SIZE):
-        batch = texts[start : start + BATCH_SIZE]
-        vectors.extend(await model.aembed_documents(batch))
-    return vectors
+    if any(not text.strip() for text in texts):
+        raise ValueError("待向量化的文本不能为空或纯空白")
+    # LangChain 按模型的 chunk_size 自动分批，无需再写一层循环。
+    return await _get_embedding_model().aembed_documents(texts)
 
 
 async def embed_query(text: str) -> list[float]:
-    """把一句查询转成向量。单走一个入口，保证和文档走的是同一条路。"""
-    return (await embed_texts([text]))[0]
+    """把一句查询转成向量，与文档共用模型和维度配置。"""
+    if not text.strip():
+        raise ValueError("查询文本不能为空或纯空白")
+    return await _get_embedding_model().aembed_query(text)

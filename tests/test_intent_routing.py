@@ -1,36 +1,43 @@
-"""路由协议与总图接线的离线测试，不调用真实模型或数据库。"""
+"""单 Agent 总图的离线测试，不连接业务库、知识库或真实模型。"""
 
+import json
+import sys
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.agents.graph import nodes
 from supportflow.agents.graph.builder import build_support_graph
 from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import initial_state
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
+from supportflow.agents.tools import order_tools, refund_tools
 
 
-def mock_router(monkeypatch, intent, next_node):
+def mock_router(monkeypatch, intent, **kwargs):
     model = Mock()
-    model.ainvoke = AsyncMock(return_value=UnderstandAndRouteOutput(
-        intent=intent, next_node=next_node,
-    ))
+    model.ainvoke = AsyncMock(return_value=UnderstandAndRouteOutput(intent=intent, **kwargs))
     monkeypatch.setattr(nodes, "_get_router_model", lambda: model)
     return model
 
 
+def context():
+    return SupportContext(4, "route-test", Mock(spec=AsyncSession))
+
+
 @pytest.mark.parametrize("payload", [
-    {"intent": "invented", "next_node": "clarify"},
-    {"intent": "product_support", "next_node": "retrieve_knowledge"},
-    {"intent": "order_query", "next_node": "end"},
-    {"intent": "order_query", "nextnode": "order_agent"},
-    {"intent": "order_query", "next_node": "order_agent", "user_id": 9},
+    {"intent": "invented"},
+    {"intent": "order_query", "next_node": "order_agent"},
+    {"intent": "order_query", "user_id": 9},
 ])
 def test_schema_rejects_invalid_or_extra_fields(payload):
     with pytest.raises(ValidationError):
@@ -38,110 +45,176 @@ def test_schema_rejects_invalid_or_extra_fields(payload):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("intent,suggestion,confirmed,expected", [
-    ("order_query", "refund_agent", False, "order_agent"),
-    ("refund_query", "order_agent", False, "refund_agent"),
-    ("refund_request", "refund_agent", False, "order_agent"),
-    ("refund_request", "refund_agent", True, "refund_agent"),
-    ("refund_request", "order_agent", True, "order_agent"),
-    ("refund_request", "clarify", True, "clarify"),
-    ("policy_question", "refund_agent", True, "prepare_knowledge"),
-    ("product_support", "order_agent", False, "order_agent"),
-    ("unknown", "refund_agent", True, "clarify"),
+@pytest.mark.parametrize("intent,expected", [
+    ("order_query", "support_agent"),
+    ("refund_query", "support_agent"),
+    ("refund_request", "support_agent"),
+    ("unknown", "support_agent"),
+    ("policy_question", "retrieve_knowledge"),
+    ("product_support", "retrieve_knowledge"),
 ])
-async def test_business_entry_constraints(monkeypatch, intent, suggestion, confirmed, expected):
-    mock_router(monkeypatch, intent, suggestion)
+async def test_routes_and_clears_previous_evidence(monkeypatch, intent, expected):
+    model = mock_router(monkeypatch, intent)
     state = initial_state()
     state["messages"] = [HumanMessage(content="本轮问题")]
-    state["order"]["candidate_order_nos"] = ["A1004"]
-    if confirmed:
-        state["order"]["selected_order_no"] = "A1004"
+    state["knowledge"] = {"question": "旧问题", "product_model": "旧型号"}
+    state["retrieved_documents"] = [{"content": "上轮证据"}]
+    state["retrieval_status"] = "ready"
     before = deepcopy(state)
-    result = await nodes.understand_and_route(
-        state, Runtime(context=SupportContext(4, "route-test")),
-    )
+    result = await nodes.understand_and_route(state, Runtime(context=context()))
     assert result["next_node"] == expected
     assert result["current_intent"] == intent
-    assert "messages" not in result and "message" not in result
+    assert result["knowledge"] == {"question": None, "product_model": None}
+    assert result["retrieved_documents"] == []
+    assert result["retrieval_status"] == "not_requested"
+    assert model.ainvoke.await_args.args[0][1:] == state["messages"]
+    assert "messages" not in result
     assert state == before
 
 
 @pytest.mark.asyncio
-async def test_history_and_progress_are_sent_without_resetting_refund(monkeypatch):
-    model = mock_router(monkeypatch, "policy_question", "prepare_knowledge")
-    state = initial_state()
-    state["refund"].update(phase="need_reason", order_no="A1004")
-    state["messages"] = [
-        HumanMessage(content="我要退 A1004"),
-        AIMessage(content="退款原因是什么？"),
-        HumanMessage(content="先问一下运费谁承担？"),
-    ]
+async def test_new_conversation_prepares_knowledge(monkeypatch):
+    mock_router(monkeypatch, "product_support", knowledge_question="X1 如何开机？", product_model="X1")
     result = await nodes.understand_and_route(
-        state, Runtime(context=SupportContext(4, "route-test")),
+        {"messages": [HumanMessage(content="它怎么开机？")]}, Runtime(context=context()),
     )
-    sent = model.ainvoke.await_args.args[0]
-    assert isinstance(sent[0], SystemMessage)
-    assert '"phase": "need_reason"' in sent[1].content
-    assert sent[2:] == state["messages"]
-    assert "refund" not in result
-    assert result["knowledge"]["topic"] == "policy"
-    assert result["retrieved_documents"] == []
-
-
-@pytest.mark.asyncio
-async def test_new_conversation_initializes_missing_state(monkeypatch):
-    mock_router(monkeypatch, "refund_request", "refund_agent")
-    result = await nodes.understand_and_route(
-        {"messages": [HumanMessage(content="我要退款")]},
-        Runtime(context=SupportContext(4, "route-test")),
-    )
-    assert result["order"]["purpose"] == "refund"
-    assert result["refund"] == initial_state()["refund"]
-    assert result["next_node"] == "order_agent"
+    assert result["knowledge"] == {"question": "X1 如何开机？", "product_model": "X1"}
+    assert result["next_node"] == "retrieve_knowledge"
 
 
 @pytest.mark.asyncio
 async def test_empty_history_does_not_call_model(monkeypatch):
-    model = mock_router(monkeypatch, "unknown", "clarify")
+    model = mock_router(monkeypatch, "unknown")
     with pytest.raises(ValueError, match="messages"):
-        await nodes.understand_and_route(
-            initial_state(), Runtime(context=SupportContext(4, "route-test")),
-        )
+        await nodes.understand_and_route(initial_state(), Runtime(context=context()))
     model.ainvoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_graph_routes_once_and_keeps_checkpoint_history(monkeypatch):
-    model = mock_router(monkeypatch, "refund_request", "refund_agent")
-    visited = []
+async def test_unconfigured_retrieval_is_explicit_and_clears_documents():
+    state = initial_state()
+    state["retrieved_documents"] = [{"content": "旧证据"}]
+    result = await nodes.retrieve_knowledge(state, Runtime(context=context()))
+    assert result["retrieval_status"] == "unavailable"
+    assert result["retrieved_documents"] == []
 
-    async def fake_order(state, runtime):
-        visited.append("order")
-        assert runtime.context.user_id == 4
-        return {
-            "next_node": "end",
-            "messages": [AIMessage(content="请提供商品或订单号")],
+
+class ScriptedModel(BaseChatModel):
+    """走真实 create_agent 和 ToolNode，只替换模型响应及数据库服务。"""
+
+    responses: list[AIMessage]
+    seen: list[list] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self):
+        return "offline-graph-test"
+
+    def bind_tools(self, tools, **kwargs):
+        assert {tool.name for tool in tools} == {
+            "get_order_detail", "list_my_orders", "get_order_item",
+            "list_my_refunds", "get_refund_detail", "get_refund_eligibility", "post_refund",
         }
+        for tool in tools:
+            properties = tool.args_schema.model_json_schema().get("properties", {})
+            assert not {"user_id", "conversation_id", "db"} & properties.keys()
+        return self
 
-    async def fake_refund(state, runtime):
-        visited.append("refund")
-        return {"messages": [AIMessage(content="退款记录")], "next_node": "end"}
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(list(messages))
+        return ChatResult(generations=[ChatGeneration(message=self.responses.pop(0))])
 
-    monkeypatch.setattr(nodes, "order_agent", fake_order)
-    monkeypatch.setattr(nodes, "refund_agent", fake_refund)
+
+def use_model(monkeypatch, responses):
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    model = ScriptedModel(responses=responses)
+    monkeypatch.setitem(sys.modules, "supportflow.agents.llm", SimpleNamespace(chat_model=model))
+    return model
+
+
+@pytest.mark.asyncio
+async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(monkeypatch):
+    router = mock_router(monkeypatch, "order_query")
+    model = use_model(monkeypatch, [
+        AIMessage(content="", tool_calls=[{"name": "list_my_orders", "args": {}, "id": "orders-1"}]),
+        AIMessage(content="没有订单"),
+        AIMessage(content="当前没有相应的使用资料"),
+        AIMessage(content="", tool_calls=[{"name": "list_my_refunds", "args": {}, "id": "refunds-1"}]),
+        AIMessage(content="没有退款申请"),
+    ])
+    orders = AsyncMock(return_value=([], 0))
+    refunds = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(order_tools.order_service, "list_orders_for_user", orders)
+    monkeypatch.setattr(refund_tools.refund_service, "list_refund_requests_for_user", refunds)
     graph = build_support_graph(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "route-test"}}
-    context = SupportContext(4, "route-test")
-    await graph.ainvoke(
-        {"messages": [HumanMessage(content="我要退款")]}, config, context=context,
+    ctx = context()
+
+    first = await graph.ainvoke({"messages": [("user", "我的订单")]}, config, context=ctx)
+    assert [m.type for m in first["messages"]] == ["human", "ai", "tool", "ai"]
+    assert first["messages"][2].tool_call_id == "orders-1"
+
+    router.ainvoke.return_value = UnderstandAndRouteOutput(
+        intent="product_support", knowledge_question="X1 怎么开机？", product_model="X1",
     )
-    model.ainvoke.return_value = UnderstandAndRouteOutput(
-        intent="refund_query", next_node="refund_agent",
+    second = await graph.ainvoke({"messages": [("user", "X1 怎么开机？")]}, config, context=ctx)
+    assert len(second["messages"]) == 6
+    assert second["retrieval_status"] == "unavailable"
+    assert '"status": "unavailable"' in model.seen[2][0].content
+
+    router.ainvoke.return_value = UnderstandAndRouteOutput(intent="refund_query")
+    third = await graph.ainvoke({"messages": [("user", "我的退款记录")]}, config, context=ctx)
+    assert len(third["messages"]) == 10
+    assert [m.type for m in third["messages"]].count("tool") == 2
+    assert third["next_node"] == "end"
+    assert third["retrieval_status"] == "not_requested"
+    assert third["knowledge"] == {"question": None, "product_model": None}
+    assert "本轮检索数据" not in model.seen[3][0].content
+    assert not any(m.type == "system" for m in third["messages"])
+    assert not {"db", "user_id", "conversation_id"} & third.keys()
+    orders.assert_awaited_once_with(ctx.db, 4, offset=0, limit=50)
+    refunds.assert_awaited_once_with(ctx.db, 4, offset=0, limit=50, status=None)
+
+
+@pytest.mark.asyncio
+async def test_refund_tool_uses_runtime_identity_and_conversation(monkeypatch):
+    mock_router(monkeypatch, "refund_request")
+    use_model(monkeypatch, [
+        AIMessage(content="", tool_calls=[{
+            "name": "post_refund", "args": {"order_no": "1260918430020004", "reason": "不喜欢"}, "id": "submit-1",
+        }]),
+        AIMessage(content="已提交申请 rq-1"),
+    ])
+    create = AsyncMock(return_value=SimpleNamespace(
+        request_key="rq-1", status=SimpleNamespace(value="pending"),
+    ))
+    monkeypatch.setattr(refund_tools, "create_refund_request", create)
+    ctx = context()
+    result = await build_support_graph().ainvoke(
+        {"messages": [("user", "请提交 1260918430020004 退款，原因不喜欢")]}, context=ctx,
     )
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content="先看看我的退款记录")]}, config, context=context,
+    create.assert_awaited_once_with(
+        ctx.db, ctx.user_id, order_no="1260918430020004", reason="不喜欢", conversation_id=ctx.conversation_id,
     )
-    assert visited == ["order", "refund"]
-    assert len(result["messages"]) == 4
-    assert result["messages"][-1].content == "退款记录"
-    assert result["current_intent"] == "refund_query"
+    assert result["messages"][2].tool_call_id == "submit-1"
+
+
+@pytest.mark.asyncio
+async def test_retrieved_sources_reach_agent_but_do_not_pollute_history(monkeypatch):
+    mock_router(monkeypatch, "product_support", knowledge_question="X1 怎么开机？", product_model="X1")
+    document = {
+        "document_id": "manual-x1", "chunk_id": "start", "title": "X1 说明书",
+        "source": "kb://manual-x1/start", "content": "首次使用需连接电源。",
+    }
+
+    async def fake_retrieval(state, runtime):
+        return {"retrieved_documents": [document], "retrieval_status": "ready", "next_node": "support_agent"}
+
+    monkeypatch.setattr(nodes, "retrieve_knowledge", fake_retrieval)
+    model = use_model(monkeypatch, [AIMessage(content="请先连接电源。来源：X1 说明书")])
+    result = await build_support_graph().ainvoke(
+        {"messages": [("user", "X1 怎么开机？")]}, context=context(),
+    )
+    system_prompt = model.seen[0][0].content
+    assert json.dumps(document, ensure_ascii=False) in system_prompt
+    assert len(result["messages"]) == 2
+    assert result["retrieved_documents"] == [document]

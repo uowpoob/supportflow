@@ -1,10 +1,10 @@
-# 售后总图骨架
+# 单 Agent 售后总图
 
-意图路由已接入模型结构化输出，返回 `current_intent` 和 `next_node`，由条件边分流。
-其余业务节点仍显式抛出 `NotImplementedError`，尚不能执行完整业务对话；未接入 HTTP 路由。
-目前路由只识别意图和分配处理者，订单确认、原因提取、取消及换单清理仍需在后续节点实现。
+订单查询、退款办理、追问和最终回复统一由 `support_agent` 完成。
+意图识别只决定是否需要先检索文档，不再切换订单 / 退款 Agent。
+当前未接入 `/conversation`；可通过 `tests/test.agent.py` 测试总图。
 
-下图由 `build_support_graph().get_graph().draw_mermaid()` 生成，虚线表示条件分支。
+以下连线由 `build_support_graph().get_graph().draw_mermaid()` 生成：
 
 ```mermaid
 ---
@@ -15,59 +15,88 @@ config:
 graph TD;
 	__start__([<p>__start__</p>]):::first
 	understand_and_route(understand_and_route)
-	order_agent(order_agent)
-	refund_agent(refund_agent)
-	prepare_knowledge(prepare_knowledge)
 	retrieve_knowledge(retrieve_knowledge)
-	answer_knowledge(answer_knowledge)
-	clarify(clarify)
+	support_agent(support_agent)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> understand_and_route;
-	order_agent -. &nbsp;end&nbsp; .-> __end__;
-	order_agent -.-> clarify;
-	order_agent -.-> prepare_knowledge;
-	order_agent -.-> refund_agent;
-	prepare_knowledge -.-> clarify;
-	prepare_knowledge -.-> retrieve_knowledge;
-	retrieve_knowledge --> answer_knowledge;
-	understand_and_route -. &nbsp;end&nbsp; .-> __end__;
-	understand_and_route -.-> clarify;
-	understand_and_route -.-> order_agent;
-	understand_and_route -.-> prepare_knowledge;
-	understand_and_route -.-> refund_agent;
-	answer_knowledge --> __end__;
-	clarify --> __end__;
-	refund_agent --> __end__;
+	retrieve_knowledge --> support_agent;
+	understand_and_route -.-> retrieve_knowledge;
+	understand_and_route -.-> support_agent;
+	support_agent --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 
 ```
 
-| 节点 | 职责 |
-| --- | --- |
-| understand_and_route | 结合历史和进度识别意图、设置处理目的、选择下一节点 |
-| order_agent | 包装订单 Agent，定位订单并决定是否交接 |
-| refund_agent | 包装退款 Agent，查询、追问或提交后结束本轮 |
-| prepare_knowledge | 准备问题、检查必要信息、清空旧证据 |
-| retrieve_knowledge | 调用检索服务，返回本轮文档片段 |
-| answer_knowledge | 普通节点调用模型，依据文档回答并附来源 |
-| clarify | 澄清意图或追问缺失信息 |
+## 三个节点
 
-## 节点协议
+| 节点 | 职责 | 当前实现 |
+| --- | --- | --- |
+| understand_and_route | 结合消息历史识别需求，整理知识问题；由代码决定出口 | 已实现 |
+| retrieve_knowledge | 按问题和型号检索文档，返回带来源的片段 | 预留接口；返回 `unavailable` 和空列表，尚未接知识库 |
+| support_agent | 同时使用订单、退款的 7 个工具；追问或答复；有文档时根据本轮证据回答 | 已接入统一 Agent |
+
+普通订单 / 退款需求和不明确的需求直接交给 `support_agent`，由它完成追问。
+商品使用和通用政策问题经过检索节点后，也由同一个 Agent 回答。
+知识库尚未接入时，提示词要求如实说明资料不足，不生成无依据的操作步骤。
+不再需要独立的 `order_agent`、`refund_agent`、`clarify` 或 `answer_knowledge` 节点。
+
+## State：需要保存的对话数据
+
+| 字段 | 内容 |
+| --- | --- |
+| messages | 用户、AI、工具调用与工具结果；使用消息合并规则 |
+| current_intent | 本轮意图，用于区分业务办理与知识咨询 |
+| next_node | 本轮出口：`support_agent`、`retrieve_knowledge` 或 `end` |
+| knowledge | 本轮完整检索问题和商品型号 |
+| retrieved_documents | 本轮文档片段及来源，整体替换 |
+| retrieval_status | `not_requested` 未请求；`unavailable` 尚不可用；`empty` 无匹配；`ready` 有结果 |
+
+移除了此前用于两个 Agent 交接的 `order`、`refund` 子状态。
+订单确认、原因、取消等对话信息由统一 Agent 从消息历史理解；真实业务状态仍以数据库和工具结果为准。
+提示词约束不是业务校验的替代：用户归属、退款资格和重复申请仍由服务层检查。
+
+每轮意图识别都会清空旧证据并重建检索输入，避免换商品或回到退款时复用旧资料。
+`initial_state()` 可用于查看新会话默认值；实际调用只传新增消息即可，不要每轮重置整份 State。
+
+## Context：本次执行的服务端资源
+
+`SupportContext` 包含 `user_id`、`conversation_id`、`db`。
+节点接收 State，通过 `runtime.context` 读取这些资源；Context 不放进 State，也不作为对话记忆保存。
+调用方负责认证、会话归属校验，并保证数据库会话在整个图调用期间打开。
+恢复下一轮时重新传入 Context，不复用已关闭的数据库会话。
 
 ```python
-async def node(
-    state: SupportState, runtime: Runtime[SupportContext],
-) -> SupportStateUpdate:
-    user_id = runtime.context.user_id
-    # 只返回本次需要更新的字段
-    return {"refund": {**state["refund"], "reason": "用户提供的原因"}}
+from supportflow.agents.graph.builder import build_support_graph
+from supportflow.agents.graph.context import SupportContext
+
+graph = build_support_graph(checkpointer=saver)
+config = {"configurable": {"thread_id": conversation_id}}
+
+async with SessionLocal() as db:
+    context = SupportContext(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        db=db,
+    )
+    result = await graph.ainvoke(
+        {"messages": [("user", "我想退买的充电宝")]},
+        config,
+        context=context,
+    )
 ```
 
-- 条件出口使用 `next_node`；节点必须明确写入本轮出口，不能沿用上一轮结果。
-- `end` 映射到 LangGraph 的 `END`，表示本轮结束，不是清空对话。
-- 追问后结束本轮；下一轮从 `understand_and_route` 重新进入并读取保存的进度。
-- 总图使用同一会话的 checkpoint；后续接口负责会话归属校验，且 `thread_id` 与 Context 的会话 ID 一致。
-- 图内没有知识 Agent 或 Review Agent，检索和依据文档回答是普通节点。
-- 后续实现顺序：理解与路由 → 订单包装 → 退款包装 → 知识节点。
+提交退款时，`conversation_id` 必须是业务库中属于当前用户的真实会话 ID。
+`END` 只结束本轮；下一轮用同一 `thread_id` 恢复历史。
+总图保存 checkpoint，内部 Agent 设置 `checkpointer=False`，避免两层重复管理历史。
+此设置也会关闭内部 Agent 的逐步持久化（参见 [LangGraph Checkpointer 文档](https://reference.langchain.com/python/langgraph/types/Checkpointer)）；当前没有实现工具执行到一半的中断恢复。
+Agent 节点回传全部新增消息，包括成对的工具调用和结果，不只返回最后一句话。
+本轮检索资料临时加入系统提示，不追加为长期历史消息；以后每轮咨询重新检索。
+
+## 当前边界
+
+- 知识检索节点只有接入位置，尚无实际检索服务。之后在该节点中读取 `state["knowledge"]`、调用检索服务并更新证据和状态即可。
+- 意图识别仍需一次模型调用；售后 Agent 内部再进行模型与工具循环。
+- 手动脚本按总图节点输出更新，`support_agent` 完成后一起显示本次工具调用与回复。
+- 离线测试使用脚本化模型和模拟业务服务，验证接线、身份传递、多轮消息与证据隔离，不代表真实模型一定遵守每条业务规则。

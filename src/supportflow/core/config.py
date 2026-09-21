@@ -44,6 +44,10 @@ class Settings(DatabaseSettings):
     # 两边靠 thread_id（= conversations 表的主键）关联，没有跨库外键。
     # 给个空默认值：本机没起 Postgres 时，只要不去建 checkpointer 就不会报错。
     LANGGRAPH_PG_DSN: str = ""
+    MILVUS_URI: str = ""
+    DB_NAME: str
+    COLLECTION: str
+
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

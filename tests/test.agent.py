@@ -1,19 +1,20 @@
-"""跑一遍订单 Agent，看每一轮它到底干了什么。
+"""跑一遍统一售后 Agent，看每一轮它到底干了什么。
 
 在 PyCharm 里直接右键 Run 这个文件就行，不需要开后端服务（脚本直接连数据库）。
 """
 
 import asyncio
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from supportflow.agents.agent.order_agent import build_order_agent
-from supportflow.agents.agent.refund_agent import build_refund_agent
+from supportflow.agents.graph.builder import build_support_graph
+from supportflow.agents.graph.context import SupportContext
 from supportflow.core.config import settings
 from supportflow.db.session import SessionLocal
 
 USER_ID = 4
-THREAD_ID = "demo-1"
+# 提交退款时，替换为 MySQL 中属于 USER_ID 的真实会话 ID。
+CONVERSATION_ID = "test-1"
+THREAD_ID = CONVERSATION_ID
 CONFIG = {"configurable": {"thread_id": THREAD_ID}}
-conversation_id="test-1"
 QUESTIONS = [
     "我想看下所有退款记录",
     "哪些订单可以退款"
@@ -49,12 +50,14 @@ async def main() -> None:
         # 2. setup() 负责那 4 张记忆表：没有就建，版本旧就升级。
         #    表已经在了的时候它就是空转，重复调用无害。
         await saver.setup()
-        await saver.adelete_thread(THREAD_ID)
+        # 需要清理测试历史时再手动开启，平时保留多轮记忆。
+        # await saver.adelete_thread(THREAD_ID)
 
         # 3. 开一个业务库（MySQL）的会话
         async with SessionLocal() as db:
             # 4. 造图：「谁能看哪些数据」钉在这一步，「记忆存哪」交给 saver
-            graph = build_refund_agent(db, USER_ID,conversation_id, checkpointer=saver)
+            graph = build_support_graph(checkpointer=saver)
+            context = SupportContext(USER_ID, CONVERSATION_ID, db)
 
             # 5. 一句一句问
             for question in QUESTIONS:
@@ -65,6 +68,7 @@ async def main() -> None:
                 async for update in graph.astream(
                         {"messages": [{"role": "user", "content": question}]},
                         CONFIG,
+                        context=context,
                         stream_mode="updates",
                 ):
                     show(update)

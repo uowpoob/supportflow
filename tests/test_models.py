@@ -24,7 +24,7 @@ class ModelConstraintTests(unittest.TestCase):
         self.session.add(User(id=1, username="customer", password_hash="test-hash"))
         self.session.flush()
         self.session.add_all([
-            Order(id=1, order_no="A1001", user_id=1, paid_amount_cents=29900),
+            Order(id=1, order_no="1260918430020001", user_id=1, paid_amount_cents=29900),
             Conversation(id="conversation-1", user_id=1),
         ])
         self.session.commit()

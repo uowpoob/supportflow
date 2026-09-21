@@ -54,7 +54,7 @@ class ApiAcceptanceTests(unittest.TestCase):
                   fulfillment_status=FulfillmentStatus.DELIVERED,
                   delivered_at=utc_now() - timedelta(days=days))
             for number, owner, days in [
-                ("A1001", 1, 2), ("A1002", 1, 3), ("A1003", 1, 5), ("B1001", 2, 2),
+                ("1260918430020001", 1, 2), ("1260918430020002", 1, 3), ("1260918430020003", 1, 5), ("1270189029630001", 2, 2),
             ]
         ])
         self.session.commit()
@@ -234,12 +234,12 @@ class ApiAcceptanceTests(unittest.TestCase):
         mine = first.get("/customer/orders").json()["data"]
         self.assertEqual(mine["total"], 3)
         self.assertEqual(
-            {item["order_no"] for item in mine["items"]}, {"A1001", "A1002", "A1003"}
+            {item["order_no"] for item in mine["items"]}, {"1260918430020001", "1260918430020002", "1260918430020003"}
         )
 
         theirs = second.get("/customer/orders").json()["data"]
         self.assertEqual(theirs["total"], 1)
-        self.assertEqual([item["order_no"] for item in theirs["items"]], ["B1001"])
+        self.assertEqual([item["order_no"] for item in theirs["items"]], ["1270189029630001"])
 
         # 管理员看到全部，这不是"漏过滤"，是接口语义本来就不同 ——
         # 权限由域级 `require_admin` 保证，列表本身不做归属筛选。
@@ -250,9 +250,9 @@ class ApiAcceptanceTests(unittest.TestCase):
         client, _ = self.login_as("customer1")
         admin, _ = self.login_as("admin")
 
-        # B1001 真实存在，属于 customer2；NOPE-9999 根本不存在。
-        others = client.get("/customer/orders/B1001")
-        missing = client.get("/customer/orders/NOPE-9999")
+        # 1270189029630001 真实存在，属于 customer2；9999999999999999 根本不存在。
+        others = client.get("/customer/orders/1270189029630001")
+        missing = client.get("/customer/orders/9999999999999999")
 
         self.assertEqual(others.status_code, 404)
         self.assertEqual(missing.status_code, 404)
@@ -261,14 +261,14 @@ class ApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(others.json(), {"detail": "订单不存在"})
 
         # 管理侧的不存在文案同样一致，不泄露"这单是谁的"。
-        self.assertEqual(admin.get("/admin/orders/NOPE-9999").json(), {"detail": "订单不存在"})
+        self.assertEqual(admin.get("/admin/orders/9999999999999999").json(), {"detail": "订单不存在"})
 
         # 资格查询走的是同一条规矩，不能因为是 GET 就松口。
         for suffix in ("/refund-eligibility",):
             with self.subTest(suffix=suffix):
                 self.assertEqual(
-                    client.get(f"/customer/orders/B1001{suffix}").json(),
-                    client.get(f"/customer/orders/NOPE-9999{suffix}").json(),
+                    client.get(f"/customer/orders/1270189029630001{suffix}").json(),
+                    client.get(f"/customer/orders/9999999999999999{suffix}").json(),
                 )
 
     def test_pagination_echoes_parameters_and_rejects_out_of_range(self):
