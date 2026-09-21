@@ -34,6 +34,38 @@ def context():
     return SupportContext(4, "route-test", Mock(spec=AsyncSession))
 
 
+@pytest.mark.asyncio
+async def test_router_request_disables_thinking_for_forced_tool_choice(monkeypatch):
+    import httpx
+    from langchain_deepseek import ChatDeepSeek
+
+    def respond(request):
+        payload = json.loads(request.content)
+        assert payload["thinking"] == {"type": "disabled"}
+        assert payload["tool_choice"]["function"]["name"] == "UnderstandAndRouteOutput"
+        return httpx.Response(200, json={
+            "id": "offline-router", "model": "deepseek-v4-flash", "object": "chat.completion",
+            "created": 0, "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "content": None, "tool_calls": [{
+                    "id": "route-1", "type": "function", "function": {
+                        "name": "UnderstandAndRouteOutput",
+                        "arguments": json.dumps({"intent": "policy_question", "knowledge_question": "运费谁承担？"}),
+                    },
+                }],
+            }}],
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+        chat_model = ChatDeepSeek(
+            model="deepseek-v4-flash", api_key="offline-test",
+            http_async_client=http_client, extra_body={"thinking": {"type": "enabled"}},
+        )
+        monkeypatch.setitem(sys.modules, "supportflow.agents.llm", SimpleNamespace(chat_model=chat_model))
+        result = await nodes._get_router_model().ainvoke([HumanMessage(content="运费谁承担？")])
+        assert result.intent == "policy_question"
+        assert chat_model.extra_body == {"thinking": {"type": "enabled"}}
+
+
 @pytest.mark.parametrize("payload", [
     {"intent": "invented"},
     {"intent": "order_query", "next_node": "order_agent"},
@@ -91,12 +123,40 @@ async def test_empty_history_does_not_call_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_retrieval_is_explicit_and_clears_documents():
+async def test_missing_question_clears_documents_without_retrieval(monkeypatch):
+    retrieval = AsyncMock()
+    monkeypatch.setattr(nodes, "retrieve", retrieval)
     state = initial_state()
     state["retrieved_documents"] = [{"content": "旧证据"}]
     result = await nodes.retrieve_knowledge(state, Runtime(context=context()))
-    assert result["retrieval_status"] == "unavailable"
+    assert result["retrieval_status"] == "empty"
     assert result["retrieved_documents"] == []
+    retrieval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["ready", "empty", "unavailable"])
+async def test_retrieval_node_updates_only_current_evidence(monkeypatch, outcome):
+    document = {
+        "document_id": "x1", "chunk_id": "x1#1", "title": "X1 使用指南",
+        "source": "data/x1.md", "content": "长按开机键", "score": 0.8,
+        "category": "data", "section": "开机",
+    }
+    retrieval = AsyncMock(return_value=[document] if outcome == "ready" else [])
+    if outcome == "unavailable":
+        retrieval.side_effect = nodes.RetrievalUnavailable("测试服务不可用")
+    monkeypatch.setattr(nodes, "retrieve", retrieval)
+    state = initial_state()
+    state["knowledge"] = {"question": "如何开机？", "product_model": "X1"}
+    state["retrieved_documents"] = [{"content": "旧证据"}]
+    before = deepcopy(state)
+    result = await nodes.retrieve_knowledge(state, Runtime(context=context()))
+    assert result["retrieval_status"] == outcome
+    assert result["retrieved_documents"] == ([document] if outcome == "ready" else [])
+    assert result["next_node"] == "support_agent"
+    assert state == before
+    assert "messages" not in result
+    retrieval.assert_awaited_once_with("商品型号：X1\n问题：如何开机？")
 
 
 class ScriptedModel(BaseChatModel):
@@ -133,6 +193,7 @@ def use_model(monkeypatch, responses):
 
 @pytest.mark.asyncio
 async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(monkeypatch):
+    monkeypatch.setattr(nodes, "retrieve", AsyncMock(side_effect=nodes.RetrievalUnavailable("离线模拟")))
     router = mock_router(monkeypatch, "order_query")
     model = use_model(monkeypatch, [
         AIMessage(content="", tool_calls=[{"name": "list_my_orders", "args": {}, "id": "orders-1"}]),

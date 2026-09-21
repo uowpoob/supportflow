@@ -1,6 +1,6 @@
 """总图保存对话和本轮检索信息，业务办理过程保留在消息历史中。"""
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import MessagesState
@@ -24,6 +24,9 @@ class RetrievedDocument(TypedDict):
     title: str
     source: str
     content: str
+    section: NotRequired[str]
+    category: NotRequired[str]
+    score: NotRequired[float]
 
 
 class SupportState(MessagesState):

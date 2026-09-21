@@ -4,6 +4,7 @@ State 保存历史；Runtime.context 提供本次执行的身份与数据库连�
 只有总图保存多轮记忆，内部 Agent 使用传入的历史并返回新增消息。
 """
 import json
+import logging
 
 from langchain_core.messages import SystemMessage
 from langgraph.runtime import Runtime
@@ -13,13 +14,21 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
+from supportflow.retrieval.search import RetrievalUnavailable, retrieve
+
+logger = logging.getLogger(__name__)
 
 
 def _get_router_model():
     # 导入、编译和画图不初始化模型客户端。
     from supportflow.agents.llm import chat_model
 
-    return chat_model.with_structured_output(UnderstandAndRouteOutput)
+    # 结构化路由会强制选择输出工具；DeepSeek 思考模式不支持指定 tool_choice。
+    # 仅为路由复制配置，保留售后 Agent 原本的模型设置。
+    router_model = chat_model.model_copy(update={
+        "extra_body": {**(chat_model.extra_body or {}), "thinking": {"type": "disabled"}},
+    })
+    return router_model.with_structured_output(UnderstandAndRouteOutput)
 
 
 async def understand_and_route(
@@ -50,17 +59,29 @@ async def understand_and_route(
 async def retrieve_knowledge(
     state: SupportState, runtime: Runtime[SupportContext],
 ) -> SupportStateUpdate:
-    """知识库接入位置，目前明确返回不可用，不伪造检索结果。
-
-    后续用 state['knowledge'] 调检索服务，返回带来源的文档。
-    接入后，有结果设置 ready，无匹配设置 empty，两者都整体替换文档列表。
-    此节点不回答用户，也不创建新 Agent。
-    """
-    return {
+    """只召回本轮证据，区分无匹配和服务失败；不回答用户或生成新消息。"""
+    update: SupportStateUpdate = {
         "retrieved_documents": [],
-        "retrieval_status": "unavailable",
+        "retrieval_status": "empty",
         "next_node": "support_agent",
     }
+    knowledge = state.get("knowledge", {})
+    question = (knowledge.get("question") or "").strip()
+    if not question:
+        return update
+    product_model = (knowledge.get("product_model") or "").strip()
+    # 当前库未存统一型号字段，补入查询上下文，不声称这是严格的型号过滤。
+    if product_model and product_model.casefold() not in question.casefold():
+        question = f"商品型号：{product_model}\n问题：{question}"
+    try:
+        documents = await retrieve(question)
+    except RetrievalUnavailable as exc:
+        logger.warning("%s", exc)
+        update["retrieval_status"] = "unavailable"
+        return update
+    update["retrieved_documents"] = documents
+    update["retrieval_status"] = "ready" if documents else "empty"
+    return update
 
 
 async def support_agent(
