@@ -7,13 +7,13 @@
 ## 调用与参数
 
 ```python
-from supportflow.retrieval.hybrid import retrieve_hybrid
+from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid
 
 chunks = await retrieve_hybrid(
     "WH-1000XM5 有线模式",
     candidate_k=20,  # 每路最多召回 20 个候选
-    top_k=5,        # 融合后最终最多返回 5 个片段
-    rrf_k=60,       # 名次平滑常数，与候选数量不同
+    top_k=5,  # 融合后最终最多返回 5 个片段
+    rrf_k=60,  # 名次平滑常数，与候选数量不同
 )
 ```
 
@@ -57,7 +57,7 @@ RRF 分数仅用于排序，不是相似度或概率，也不应用向量的 0.5
 也可以直接验证纯融合函数，不访问任何检索服务：
 
 ```python
-from supportflow.retrieval.rrf import reciprocal_rank_fusion
+from supportflow.retrieval.retrieving.rrf import reciprocal_rank_fusion
 
 fused = reciprocal_rank_fusion([vector_chunks, bm25_chunks], top_k=5, rrf_k=60)
 ```

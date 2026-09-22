@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pymilvus import DataType
 
-from supportflow.retrieval import search
+from supportflow.retrieval.retrieving import vector
 
 
 def hit(chunk_id="DOC#1", score=0.8):
@@ -31,20 +31,20 @@ def client(monkeypatch):
         {"name": "vector", "type": DataType.FLOAT_VECTOR, "params": {"dim": 2}},
     ]}
     client.search.return_value = [[hit()]]
-    monkeypatch.setattr(search, "MilvusClient", Mock(return_value=client))
-    monkeypatch.setattr(search, "embed_query", AsyncMock(return_value=[0.2, 0.8]))
+    monkeypatch.setattr(vector, "MilvusClient", Mock(return_value=client))
+    monkeypatch.setattr(vector, "embed_query", AsyncMock(return_value=[0.2, 0.8]))
     return client
 
 
 @pytest.mark.asyncio
 async def test_retrieval_returns_ranked_deduplicated_sources(client):
     client.search.return_value = [[hit("low", 0.49), hit("second", 0.5), hit("first", 0.9), hit("first", 0.8)]]
-    documents = await search.retrieve(" 怎么开机？ ", top_k=4)
+    documents = await vector.retrieve(" 怎么开机？ ", top_k=4)
     assert [doc["chunk_id"] for doc in documents] == ["first", "second"]
     assert documents[0]["content"] == "长按开机键。"
     assert documents[0]["source"] == "data/DOC.md"
     assert documents[0]["score"] == 0.9
-    search.embed_query.assert_awaited_once_with("怎么开机？")
+    vector.embed_query.assert_awaited_once_with("怎么开机？")
     args = client.search.call_args.kwargs
     assert args["limit"] == 4
     assert args["anns_field"] == "vector"
@@ -60,7 +60,7 @@ async def test_retrieval_returns_ranked_deduplicated_sources(client):
 @pytest.mark.asyncio
 async def test_filter_values_are_escaped(client):
     ids = ['文档" or chunk_id != "', '目录\\资料']
-    await search.retrieve("退款期限", category="policies", document_ids=ids)
+    await vector.retrieve("退款期限", category="policies", document_ids=ids)
     expression = client.search.call_args.kwargs["filter"]
     assert 'category == "policies"' in expression
     serialized_ids = expression.split("document_id in ")[1]
@@ -71,7 +71,7 @@ async def test_filter_values_are_escaped(client):
 @pytest.mark.parametrize("results", [[], [[]], [[hit(score=0.1)]], [[hit(score=float("nan"))]]])
 async def test_no_qualifying_hits_return_empty(client, results):
     client.search.return_value = results
-    assert await search.retrieve("库外问题") == []
+    assert await vector.retrieve("库外问题") == []
 
 
 @pytest.mark.asyncio
@@ -82,15 +82,15 @@ async def test_no_qualifying_hits_return_empty(client, results):
 ])
 async def test_invalid_parameters_do_not_call_external_services(client, kwargs):
     with pytest.raises(ValueError):
-        await search.retrieve(**kwargs)
-    search.embed_query.assert_not_awaited()
-    search.MilvusClient.assert_not_called()
+        await vector.retrieve(**kwargs)
+    vector.embed_query.assert_not_awaited()
+    vector.MilvusClient.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_explicit_empty_document_filter_does_not_search_entire_collection(client):
-    assert await search.retrieve("q", document_ids=[]) == []
-    search.embed_query.assert_not_awaited()
+    assert await vector.retrieve("q", document_ids=[]) == []
+    vector.embed_query.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -104,25 +104,25 @@ async def test_milvus_errors_are_unavailable_and_close_client(client, stage):
         client.search.side_effect = TimeoutError("simulated timeout")
     else:
         del client.search.return_value[0][0]["entity"]["source"]
-    with pytest.raises(search.RetrievalUnavailable):
-        await search.retrieve("q")
+    with pytest.raises(vector.RetrievalUnavailable):
+        await vector.retrieve("q")
     client.close.assert_called_once()
     client.create_collection.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_embedding_failure_is_unavailable(client):
-    search.embed_query.side_effect = TimeoutError("sensitive transport details")
-    with pytest.raises(search.RetrievalUnavailable) as error:
-        await search.retrieve("q")
+    vector.embed_query.side_effect = TimeoutError("sensitive transport details")
+    with pytest.raises(vector.RetrievalUnavailable) as error:
+        await vector.retrieve("q")
     assert "sensitive" not in str(error.value)
-    search.MilvusClient.assert_not_called()
+    vector.MilvusClient.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("vector", [[1.0], [float("inf"), 1.0], [0.0, 0.0]])
 async def test_bad_query_vectors_do_not_connect(client, vector):
-    search.embed_query.return_value = vector
-    with pytest.raises(search.RetrievalUnavailable):
-        await search.retrieve("q")
-    search.MilvusClient.assert_not_called()
+    vector.embed_query.return_value = vector
+    with pytest.raises(vector.RetrievalUnavailable):
+        await vector.retrieve("q")
+    vector.MilvusClient.assert_not_called()

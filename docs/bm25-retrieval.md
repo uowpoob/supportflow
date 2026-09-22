@@ -1,6 +1,6 @@
 # BM25 召回
 
-入口：`src/supportflow/retrieval/bm25.py`。从本地 `data/` 和 `policies/` 读取资料，
+入口：`../src/supportflow/retrieval/retrieving/bm25.py`。从本地 `data/` 和 `policies/` 读取资料，
 复用向量入库的 `load_documents()` / `split_documents()`，按条款建立内存索引。
 不需要 Embedding、Milvus 或 `.env` 配置。
 
@@ -12,7 +12,7 @@
 ```
 
 ```python
-from supportflow.retrieval.bm25 import retrieve_bm25
+from supportflow.retrieval.retrieving.bm25 import retrieve_bm25
 
 chunks = await retrieve_bm25("WH-1000XM5 有线模式", top_k=5)
 ```

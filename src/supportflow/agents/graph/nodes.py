@@ -14,7 +14,7 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
-from supportflow.retrieval.hybrid import retrieve_hybrid as retrieve
+from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
 from supportflow.retrieval.types import RetrievalUnavailable
 
 logger = logging.getLogger(__name__)
