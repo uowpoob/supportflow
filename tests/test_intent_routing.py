@@ -1,5 +1,6 @@
 """单 Agent 总图的离线测试，不连接业务库、知识库或真实模型。"""
 
+import asyncio
 import json
 import sys
 from copy import deepcopy
@@ -257,6 +258,58 @@ async def test_refund_tool_uses_runtime_identity_and_conversation(monkeypatch):
         ctx.db, ctx.user_id, order_no="1260918430020004", reason="不喜欢", conversation_id=ctx.conversation_id,
     )
     assert result["messages"][2].tool_call_id == "submit-1"
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_calls_share_session_without_overlapping_after_resume(monkeypatch):
+    """模拟第二次运行恢复历史后，模型同时请求订单与退款工具。"""
+    mock_router(monkeypatch, "order_query")
+    model = use_model(monkeypatch, [
+        AIMessage(content="有华硕和华为两台笔记本，你说的是哪台？"),
+        AIMessage(content="", tool_calls=[
+            {"name": "list_my_orders", "args": {}, "id": "orders-a"},
+            {"name": "list_my_refunds", "args": {}, "id": "refunds-a"},
+            {"name": "list_my_orders", "args": {}, "id": "orders-b"},
+        ]),
+        AIMessage(content="已核对华为笔记本的订单与退款记录。"),
+    ])
+    saver = InMemorySaver()
+    config = {"configurable": {"thread_id": "resume-parallel-tools"}}
+    await build_support_graph(checkpointer=saver).ainvoke(
+        {"messages": [("user", "我的笔记本有问题")]}, config, context=context(),
+    )
+
+    # 新建图与业务会话，保留 checkpoint，模拟下一次执行脚本。
+    resumed_context = context()
+    active = 0
+    completed = 0
+
+    async def query(db, user_id, **kwargs):
+        nonlocal active, completed
+        assert db is resumed_context.db
+        assert user_id == resumed_context.user_id
+        assert active == 0, "同一个 AsyncSession 被多个工具并发使用"
+        active += 1
+        try:
+            await asyncio.sleep(0.01)  # 模拟数据库等待，允许其他工具获得执行机会。
+            completed += 1
+            return [], 0
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(order_tools.order_service, "list_orders_for_user", query)
+    monkeypatch.setattr(refund_tools.refund_service, "list_refund_requests_for_user", query)
+    result = await build_support_graph(checkpointer=saver).ainvoke(
+        {"messages": [("user", "华为")]}, config, context=resumed_context,
+    )
+    assert completed == 3
+    assert {message.tool_call_id for message in result["messages"] if message.type == "tool"} == {
+        "orders-a", "refunds-a", "orders-b",
+    }
+    assert [message.content for message in model.seen[1] if message.type == "human"] == [
+        "我的笔记本有问题", "华为",
+    ]
+    assert result["messages"][-1].content == "已核对华为笔记本的订单与退款记录。"
 
 
 @pytest.mark.asyncio

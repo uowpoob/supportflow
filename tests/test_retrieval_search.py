@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pymilvus import DataType
 
-from supportflow.retrieval import search
+from supportflow.retrieval.retrieving import search
 
 
 def hit(chunk_id="DOC#1", score=0.8):

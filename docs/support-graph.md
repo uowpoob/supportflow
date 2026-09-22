@@ -34,7 +34,7 @@ graph TD;
 | 节点 | 职责 | 当前实现 |
 | --- | --- | --- |
 | understand_and_route | 结合消息历史识别需求，整理知识问题；由代码决定出口 | 已实现 |
-| retrieve_knowledge | 按问题召回文档，型号补入查询文本，返回带来源的片段 | 已接 Milvus 向量召回，返回 `ready` / `empty` / `unavailable` |
+| retrieve_knowledge | 按问题召回文档，型号补入查询文本，返回带来源的片段 | 已接向量 + BM25 双路召回与 RRF，返回 `ready` / `empty` / `unavailable` |
 | support_agent | 同时使用订单、退款的 7 个工具；追问或答复；有文档时根据本轮证据回答 | 已接入统一 Agent |
 
 普通订单 / 退款需求和不明确的需求直接交给 `support_agent`，由它完成追问。
@@ -67,6 +67,12 @@ graph TD;
 调用方负责认证、会话归属校验，并保证数据库会话在整个图调用期间打开。
 恢复下一轮时重新传入 Context，不复用已关闭的数据库会话。
 
+订单与退款工具共享本次 Context 的 `AsyncSession`，不能并发使用。
+模型一次返回多个工具调用时，ToolNode 仍会调度这些调用，但 Agent 的
+`serialize_db_tools` 中间件会用同一把异步锁逐个执行完整工具，避免 MySQL
+连接初始化或查询时发生并发冲突。不同 Agent 使用独立锁；调用方仍须为
+不同请求提供独立数据库会话。该锁不替代退款业务的数据库约束。
+
 ```python
 from supportflow.agents.graph.builder import build_support_graph
 from supportflow.agents.graph.context import SupportContext
@@ -96,7 +102,7 @@ Agent 节点回传全部新增消息，包括成对的工具调用和结果，�
 
 ## 当前边界
 
-- 知识检索已接入稠密向量召回，默认 Top-5、最低 COSINE 分数 0.5（尚待校准）。尚无 BM25、RRF 或重排；型号只补入检索问题，不构成严格型号过滤。详见 [向量召回](vector-retrieval.md)。
+- 知识检索已接入向量 + BM25 双路召回，默认每路 20 条候选、RRF 常数 60、融合后 Top-5。COSINE 门槛 0.5 仅用于向量路（尚待校准）。单路失败且另一路有结果时降级返回；有故障但无候选时返回 unavailable。尚未接入重排模型；型号只补入检索问题，不构成严格型号过滤。详见 [混合召回与 RRF](hybrid-retrieval.md)。
 - 意图识别仍需一次模型调用；售后 Agent 内部再进行模型与工具循环。
 - 手动脚本按总图节点输出更新，`support_agent` 完成后一起显示本次工具调用与回复。
 - 离线测试使用脚本化模型和模拟业务服务，验证接线、身份传递、多轮消息与证据隔离，不代表真实模型一定遵守每条业务规则。

@@ -7,33 +7,18 @@ import argparse
 import asyncio
 import json
 import math
-from typing import Literal, TypedDict
+from typing import Literal
 
 from pymilvus import DataType, MilvusClient
 
 from supportflow.retrieval.embedding import embed_query
+from supportflow.retrieval.types import TEXT_FIELDS, RetrievalUnavailable, RetrievedChunk
 
 DEFAULT_TOP_K = 5
 # 起始门槛，需用后续标注数据校准；不代表已经验证的相关性判定标准。
 DEFAULT_MIN_SCORE = 0.5
 MILVUS_TIMEOUT = 10
 EMBEDDING_TIMEOUT = 30
-TEXT_FIELDS = ("document_id", "chunk_id", "title", "section", "source", "category", "content")
-
-
-class RetrievedChunk(TypedDict):
-    document_id: str
-    chunk_id: str
-    title: str
-    section: str
-    source: str
-    category: str
-    content: str
-    score: float
-
-
-class RetrievalUnavailable(RuntimeError):
-    """配置、Embedding 或 Milvus 失败，与“正常查询但没有匹配”区分。"""
 
 
 def _search_milvus(

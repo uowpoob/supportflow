@@ -14,7 +14,8 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
-from supportflow.retrieval.search import RetrievalUnavailable, retrieve
+from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
+from supportflow.retrieval.types import RetrievalUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ async def understand_and_route(
 async def retrieve_knowledge(
     state: SupportState, runtime: Runtime[SupportContext],
 ) -> SupportStateUpdate:
-    """只召回本轮证据，区分无匹配和服务失败；不回答用户或生成新消息。"""
+    """双路召回后按 RRF 融合本轮证据，区分无匹配和服务失败。"""
     update: SupportStateUpdate = {
         "retrieved_documents": [],
         "retrieval_status": "empty",

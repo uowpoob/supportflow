@@ -1,6 +1,6 @@
 # 向量召回
 
-入口：`src/supportflow/retrieval/search.py`，使用入库时相同的 Embedding 模型与维度。
+入口：`../src/supportflow/retrieval/retrieving/search.py`，使用入库时相同的 Embedding 模型与维度。
 只读取已有库和集合，不调用入库初始化、不新增或更新记录，也不生成回答。
 
 ## 命令行
@@ -20,7 +20,7 @@
 ## Python 调用
 
 ```python
-from supportflow.retrieval.search import retrieve
+from supportflow.retrieval.retrieving.search import retrieve
 
 chunks = await retrieve("耳机没电后还能有线聆听吗？", top_k=5, min_score=0.5)
 ```
@@ -37,19 +37,23 @@ Milvus COSINE Top-K → 丢弃低分结果 → 按 chunk_id 去重。
 ## 节点接入
 
 `retrieve_knowledge` 读取当前 `knowledge.question`，必要时把 `product_model` 补入问题。
+节点现调用 [混合召回与 RRF](hybrid-retrieval.md)，本模块作为其中的向量召回通道；
+默认每路取 20 个候选，RRF 融合后返回最多 5 条。单路命令行和 Python 入口仍可独立使用。
 每次整体替换证据列表，不追加消息或复用上轮文档：
 
 | 情况 | retrieval_status |
 | --- | --- |
 | 召回至少一个合格片段 | ready |
 | 没有检索问题或没有合格片段 | empty |
-| 配置、Embedding 或 Milvus 出错 | unavailable |
+| 单路失败但另一路有候选 | ready（日志记录降级） |
+| 有召回通道失败且没有任何可用候选 | unavailable |
 
 随后进入原有 `support_agent`，按本轮证据回答并引用来源。订单和退款业务仍走原有工具。
 
 ## 当前边界
 
-- 这是稠密向量召回基线，尚未加入 BM25、RRF 和重排模型。
+- 这是稠密向量召回基线；另有可独立调用的 [BM25 召回](bm25-retrieval.md)。
+  图节点已通过混合入口接入双路召回和 RRF，尚未接入重排模型。
 - 默认 0.5 是待校准的初始门槛，不是答案正确率；Top-K 候选也不保证足以回答。
 - 当前资料没有统一的商品型号、政策版本或生效日期字段。型号只补进查询文本，
   不构成严格型号过滤；暂不支持政策版本、生效时间过滤。回答前仍须检查片段适用范围。
