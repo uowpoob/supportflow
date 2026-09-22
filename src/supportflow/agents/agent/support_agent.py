@@ -1,6 +1,9 @@
 """统一售后 Agent：同一份对话上下文中使用订单与退款工具。"""
 
+import asyncio
+
 from langchain.agents import create_agent
+from langchain.agents.middleware import wrap_tool_call
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.agents.prompt.system import SUPPORT_AGENT_SYSTEM_PROMPT
@@ -23,6 +26,16 @@ def build_support_agent(
     """
     from supportflow.agents.llm import chat_model
 
+    # 这些工具闭包共享一个 AsyncSession。ToolNode 可能并发调度同一条
+    # AIMessage 中的多个工具，因此在实际执行处串行化，不能仅靠提示词约束。
+    # 锁属于本次构建的 Agent，不让不同请求的独立数据库会话相互等待。
+    db_tool_lock = asyncio.Lock()
+
+    @wrap_tool_call
+    async def serialize_db_tools(request, handler):
+        async with db_tool_lock:
+            return await handler(request)
+
     system_prompt = SUPPORT_AGENT_SYSTEM_PROMPT
     if knowledge_context is not None:
         system_prompt += (
@@ -38,4 +51,5 @@ def build_support_agent(
         ],
         system_prompt=system_prompt,
         checkpointer=checkpointer,
+        middleware=[serialize_db_tools],
     )
