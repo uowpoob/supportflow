@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from supportflow.agents.checkpointer import open_checkpointer
+from supportflow.agents.graph.builder import build_support_graph
 from supportflow.api.router import api_router
+from supportflow.services.conversations import ConversationChat
 
 
 @asynccontextmanager
@@ -18,6 +20,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     async with open_checkpointer() as checkpointer:
         app.state.checkpointer = checkpointer
+        app.state.support_graph = build_support_graph(checkpointer=checkpointer)
+        app.state.conversation_chat = ConversationChat(app.state.support_graph)
         yield
 
 

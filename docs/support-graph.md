@@ -2,7 +2,9 @@
 
 订单查询、退款办理、追问和最终回复统一由 `support_agent` 完成。
 意图识别只决定是否需要先检索文档，不再切换订单 / 退款 Agent。
-当前未接入 `/conversation`；可通过 `tests/test.agent.py` 测试总图。
+已接入 `/customer/conversations/{conversation_id}/messages` 非流式接口，
+会话 UUID 同时作为 `thread_id`；接口细节见 [客户会话接口](conversation-api.md)。
+`tests/test.agent.py` 仍可作为手动调用入口。
 
 以下连线由 `build_support_graph().get_graph().draw_mermaid()` 生成：
 

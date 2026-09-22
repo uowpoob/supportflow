@@ -10,6 +10,8 @@ from supportflow.agents.prompt.system import SUPPORT_AGENT_SYSTEM_PROMPT
 from supportflow.agents.tools.order_tools import build_order_tools
 from supportflow.agents.tools.refund_tools import build_refund_tools
 
+SUPPORT_STREAM_TAG = "supportflow:answer"
+
 
 def build_support_agent(
     db: AsyncSession,

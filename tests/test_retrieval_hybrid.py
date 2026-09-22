@@ -8,7 +8,7 @@ from langgraph.runtime import Runtime
 
 from supportflow.agents.graph import nodes
 from supportflow.agents.graph.state import initial_state
-from supportflow.retrieval.retrieving import hybrid
+from supportflow.retrieval import hybrid
 from supportflow.retrieval.types import RetrievalUnavailable
 
 

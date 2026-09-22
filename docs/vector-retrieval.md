@@ -1,6 +1,6 @@
 # 向量召回
 
-入口：`../src/supportflow/retrieval/retrieving/search.py`，使用入库时相同的 Embedding 模型与维度。
+入口：`src/supportflow/retrieval/search.py`，使用入库时相同的 Embedding 模型与维度。
 只读取已有库和集合，不调用入库初始化、不新增或更新记录，也不生成回答。
 
 ## 命令行
@@ -20,7 +20,7 @@
 ## Python 调用
 
 ```python
-from supportflow.retrieval.retrieving.search import retrieve
+from supportflow.retrieval.search import retrieve
 
 chunks = await retrieve("耳机没电后还能有线聆听吗？", top_k=5, min_score=0.5)
 ```

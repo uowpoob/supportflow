@@ -16,7 +16,7 @@ def after_understanding(state: SupportState) -> str:
 
 
 def build_support_graph(*, checkpointer: BaseCheckpointSaver | None = None):
-    """只构造图；执行时传入 SupportContext，未接入 HTTP 路由。
+    """只构造图；HTTP 服务启动时构建并复用，执行时传入本次 SupportContext。
 
     总图负责 checkpoint；END 只结束本轮，下一轮传新增消息恢复会话。
     """

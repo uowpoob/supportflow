@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from supportflow.retrieval.retrieving import bm25
+from supportflow.retrieval import bm25
 from supportflow.retrieval.resource2vector import load_documents, split_documents
 from supportflow.retrieval.types import RetrievalUnavailable
 

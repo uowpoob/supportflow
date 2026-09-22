@@ -16,7 +16,7 @@ CONVERSATION_ID = "test-1"
 THREAD_ID = CONVERSATION_ID
 CONFIG = {"configurable": {"thread_id": THREAD_ID}}
 QUESTIONS = [
-    "华为",
+    "你好",
     "我想申请售后"
 
 ]

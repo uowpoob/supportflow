@@ -8,11 +8,11 @@ import math
 from collections.abc import Awaitable
 from typing import Literal
 
-from supportflow.retrieval.retrieving.bm25 import retrieve_bm25
-from supportflow.retrieval.retrieving.rrf import (
+from supportflow.retrieval.bm25 import retrieve_bm25
+from supportflow.retrieval.rrf import (
     DEFAULT_RRF_K, DEFAULT_TOP_K, reciprocal_rank_fusion, validate_rrf_options,
 )
-from supportflow.retrieval.retrieving.search import DEFAULT_MIN_SCORE, retrieve as retrieve_vector
+from supportflow.retrieval.search import DEFAULT_MIN_SCORE, retrieve as retrieve_vector
 from supportflow.retrieval.types import RetrievalUnavailable, RetrievedChunk
 
 DEFAULT_CANDIDATE_K = 20

@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from supportflow.retrieval.retrieving.rrf import reciprocal_rank_fusion
+from supportflow.retrieval.rrf import reciprocal_rank_fusion
 
 
 def chunk(chunk_id: str, score: float = 0.8):
