@@ -8,8 +8,7 @@ ROUTING_SYSTEM_PROMPT = """
 - 本次唯一允许调用的函数是 UnderstandAndRouteOutput，它用于提交分类结果。
   必须且只调用它一次，参数仅包含 intent、knowledge_question、product_model。
 - 不输出面向用户的回答、解释、Markdown 或额外字段，不调用任何业务工具。
-- get_order_item、list_my_orders、get_order_detail、list_my_refunds、get_refund_detail、
-  get_refund_eligibility、post_refund 均属于后续售后 Agent，本节点禁止调用。
+- 不得调用任何工具
   即使你认为需要先查询订单或商品，也应先提交意图，由后续 Agent 查询或追问。
 
 历史消息的使用方式：

@@ -1,6 +1,11 @@
 import type {
+  Conversation,
+  ConversationMessages,
+  ConversationPage,
   JsonRecord,
   ListResult,
+  MessageCreatePayload,
+  MessageTurn,
   MyRefundRequestDetail,
   PageQuery,
   RefundEligibility,
@@ -56,7 +61,51 @@ export function fetchMyRefundRequest(requestKey: string): Promise<MyRefundReques
   return http.get<MyRefundRequestDetail>(`/customer/refund-requests/${encodeParam(requestKey)}`)
 }
 
-/** GET /customer/conversations —— 我的对话会话（Agent 接上之后才会有内容） */
-export async function fetchConversations(): Promise<ListResult> {
-  return normalizeList(await http.get<unknown>('/customer/conversations'))
+/**
+ * 会话接口，对应后端 `api/customer/conversations.py`。
+ *
+ * 字段全部照 `schemas/conversations.py` 写死，不再返回 `JsonRecord` ——
+ * 会话这块的结构已经定稿（见 `docs/conversation-api.md`），
+ * 靠猜字段只会把拼写错误拖到运行期才暴露。
+ */
+
+/** POST /customer/conversations —— 新建会话（只建壳，不调模型、不生成消息） */
+export function createConversation(title?: string): Promise<Conversation> {
+  // 不传标题时后端用默认的"新会话"；这里不替它编一个标题。
+  return http.post<Conversation>('/customer/conversations', title === undefined ? {} : { title })
+}
+
+/** GET /customer/conversations —— 我的会话，按最近活动时间倒序 */
+export function fetchConversations(query: PageQuery = {}): Promise<ConversationPage> {
+  return http.get<ConversationPage>(`/customer/conversations${pageQuery(query)}`)
+}
+
+/**
+ * GET /customer/conversations/{id}/messages —— 历史消息。
+ *
+ * ⚠️ `offset=0` 拿的是**最早**的那些，不是最新的；要最新一段得先知道 total
+ * 再倒着算，或者像首页那样一次性把 limit 拉满。
+ */
+export function fetchConversationMessages(
+  conversationId: string,
+  query: PageQuery = {},
+): Promise<ConversationMessages> {
+  return http.get<ConversationMessages>(
+    `/customer/conversations/${encodeParam(conversationId)}/messages${pageQuery(query)}`,
+  )
+}
+
+/**
+ * POST /customer/conversations/{id}/messages —— 发一条消息。
+ *
+ * 非流式：这个请求要等到整轮跑完（模型 + 工具 + 检索）才返回，
+ * 中间没有任何输出，所以界面上得自己显示"正在回复"。
+ * 返回的 `messages` 里**包含刚发的那条用户消息**。
+ */
+export function sendConversationMessage(conversationId: string, content: string): Promise<MessageTurn> {
+  const payload: MessageCreatePayload = { content }
+  return http.post<MessageTurn>(
+    `/customer/conversations/${encodeParam(conversationId)}/messages`,
+    payload,
+  )
 }

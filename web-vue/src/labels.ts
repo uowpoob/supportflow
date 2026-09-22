@@ -41,6 +41,20 @@ export const REFUND_EXECUTION_STATUS_LABELS: Record<string, string> = {
   failed: '失败',
 }
 
+/**
+ * 对齐 `agents/graph/state.py::RetrievalStatus` —— 本轮检索到没到证据。
+ *
+ * `empty`（查了，没找到）和 `unavailable`（检索服务坏了）必须分成两句话：
+ * 前者是"知识库确实没有这个话题"，后者是"现在问不了，过会儿再试"，
+ * 对用户来说是完全不同的两件事。
+ */
+export const RETRIEVAL_STATUS_LABELS: Record<string, string> = {
+  not_requested: '未触发检索',
+  ready: '已找到依据',
+  empty: '未找到依据',
+  unavailable: '检索服务不可用',
+}
+
 /** 查不到就原样显示 —— 后端加了新状态时看到的是原文，而不是 "undefined"。 */
 export function labelOf(labels: Record<string, string>, value: unknown): string {
   const key = String(value ?? '')

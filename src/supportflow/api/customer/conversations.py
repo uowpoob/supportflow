@@ -1,10 +1,8 @@
-"""客户会话与 SSE 消息接口；conversation_id 与 thread_id 使用同一个 UUID。"""
+"""客户会话与非流式消息接口；conversation_id 与 thread_id 使用同一个 UUID。"""
 
-from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.api.auth.deps import require_customer
@@ -12,7 +10,7 @@ from supportflow.db.session import get_db
 from supportflow.models.entities import User
 from supportflow.schemas.conversations import (
     ConversationCreate, ConversationMessagesOut, ConversationOut, ConversationPage,
-    MessageCreate, MessageStreamEvent,
+    MessageCreate, MessageTurnOut,
 )
 from supportflow.schemas.result import Success
 from supportflow.services import conversations as conversation_service
@@ -70,37 +68,17 @@ async def list_messages(
     return Success[ConversationMessagesOut](data=page)
 
 
-async def _sse_events(events: AsyncIterator[MessageStreamEvent]) -> AsyncIterator[str]:
-    async for event, data in events:
-        # JSON 会转义正文换行，防止文字被误解析为新的 SSE 字段或事件。
-        yield f"event: {event}\ndata: {data.model_dump_json()}\n\n"
-
-
-async def _message_stream(
+@router.post("/conversations/{conversation_id}/messages", response_model=Success[MessageTurnOut])
+async def send_message(
     conversation_id: UUID,
     payload: MessageCreate,
     request: Request,
     user: User = Depends(require_customer),
-    db: AsyncSession = Depends(get_db, scope="request"),
-) -> AsyncIterator[AsyncIterator[str]]:
-    """在响应头发送前完成归属/占用校验，流关闭后才退出上下文。"""
+    db: AsyncSession = Depends(get_db),
+) -> Success[MessageTurnOut]:
+    """发送一条新消息，等待本轮完成后返回增量消息及本轮检索来源。"""
     try:
-        async with _chat(request).stream_message(db, user.id, str(conversation_id), payload.content) as events:
-            yield _sse_events(events)
+        turn = await _chat(request).send_message(db, user.id, str(conversation_id), payload.content)
     except ConversationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-
-@router.post(
-    "/conversations/{conversation_id}/messages",
-    response_class=StreamingResponse,
-    responses={200: {"description": "SSE 消息流：start、message、done 或 error", "content": {"text/event-stream": {}}}},
-)
-async def send_message(
-    stream: AsyncIterator[str] = Depends(_message_stream, scope="request"),
-) -> StreamingResponse:
-    """只流式返回售后 Agent 的文字；done 事件包含本轮最终消息和检索来源。"""
-    return StreamingResponse(
-        stream, media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return Success[MessageTurnOut](data=turn)

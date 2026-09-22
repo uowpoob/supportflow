@@ -8,7 +8,7 @@ import pytest
 from langchain_core.documents import Document
 from pydantic import SecretStr
 
-from supportflow.retrieval import embedding, milvus, resource2vector
+from supportflow.retrieval import embedding, milvus, resource2chunks
 
 
 @pytest.fixture
@@ -103,11 +103,11 @@ async def test_pipeline_verifies_rows_and_always_closes(settings, tmp_path, monk
     monkeypatch.setattr(embedding, "embed_texts", embed)
     if failure:
         with pytest.raises(RuntimeError):
-            await resource2vector.ingest_documents((tmp_path,))
+            await resource2chunks.ingest_documents((tmp_path,))
         if failure == "embedding":
             client.upsert.assert_not_called()
     else:
-        result = await resource2vector.ingest_documents((tmp_path,))
+        result = await resource2chunks.ingest_documents((tmp_path,))
         assert result == {"documents": 1, "chunks": 1, "upserted": 1, "verified": 1}
         assert client.query.call_args.kwargs["consistency_level"] == "Strong"
         assert "DOC-001#1.1" in client.query.call_args.kwargs["filter"]

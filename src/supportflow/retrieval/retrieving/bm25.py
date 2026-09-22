@@ -16,7 +16,7 @@ from typing import Literal
 import jieba
 from rank_bm25 import BM25Okapi
 
-from supportflow.retrieval.resource2vector import load_documents, split_documents
+from supportflow.retrieval.resource2chunks import load_documents, split_documents
 from supportflow.retrieval.types import TEXT_FIELDS, RetrievalUnavailable, RetrievedChunk
 
 DEFAULT_TOP_K = 5

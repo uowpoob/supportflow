@@ -1,6 +1,6 @@
 # 向量入库
 
-入口为 `src/supportflow/retrieval/resource2vector.py`。
+入口为 `../src/supportflow/retrieval/resource2chunks.py`。
 
 ## 配置与执行
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from supportflow.retrieval.resource2vector import load_documents, split_documents
+from supportflow.retrieval.resource2chunks import load_documents, split_documents
 
 
 def test_load_and_split_preserve_content_and_context(tmp_path):

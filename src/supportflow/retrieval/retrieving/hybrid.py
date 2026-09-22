@@ -1,4 +1,4 @@
-"""并发执行向量与 BM25 召回，然后通过 RRF 生成本轮证据列表。"""
+"""并发执行向量与 BM25 召回，经 RRF 融合后按需重排，生成本轮证据列表。"""
 
 import argparse
 import asyncio
@@ -9,6 +9,7 @@ from collections.abc import Awaitable
 from typing import Literal
 
 from supportflow.retrieval.retrieving.bm25 import retrieve_bm25
+from supportflow.retrieval.retrieving.rerank import rerank_chunks
 from supportflow.retrieval.retrieving.rrf import (
     DEFAULT_RRF_K, DEFAULT_TOP_K, reciprocal_rank_fusion, validate_rrf_options,
 )
@@ -36,10 +37,14 @@ async def retrieve_hybrid(
     candidate_k: int = DEFAULT_CANDIDATE_K,
     rrf_k: int = DEFAULT_RRF_K,
     min_score: float = DEFAULT_MIN_SCORE,
+    rerank: bool = False,
     category: Literal["data", "policies"] | None = None,
     document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
-    """每路最多 candidate_k 条，融合后最多 top_k 条；min_score 只用于向量路。
+    """每路最多 candidate_k 条，融合后最多返回 top_k 条；min_score 只用于向量路。
+
+    rerank=True 时融合结果先保留 candidate_k 条再重排，让重排从更大的候选池里
+    挑出 top_k 条；重排不可用时退回融合顺序，不影响本轮能否拿到证据。
 
     单路失败但另一路有候选时继续返回结果并记录降级日志；有故障且没有任何
     可用候选时抛 RetrievalUnavailable。只有两路正常无匹配才返回 []。
@@ -82,10 +87,19 @@ async def retrieve_hybrid(
         else:
             ranked_lists.append(result)
 
-    fused = reciprocal_rank_fusion(ranked_lists, top_k=top_k, rrf_k=rrf_k)
+    # 融合先保留 candidate_k 条，重排才有挑选余地；最终一律截到 top_k 条。
+    fused = reciprocal_rank_fusion(ranked_lists, top_k=candidate_k, rrf_k=rrf_k)
     if not fused and failed_sources:
         raise RetrievalUnavailable(f"混合检索暂不可用（{', '.join(failed_sources)} 召回失败）")
-    return fused
+
+    if not rerank:
+        return fused[:top_k]
+    try:
+        return await rerank_chunks(query, fused, top_n=top_k)
+    except RetrievalUnavailable:
+        # 重排坏了也要照常给证据，退回融合顺序。
+        logger.warning("混合检索重排不可用，退回融合顺序")
+        return fused[:top_k]
 
 
 def main() -> None:
@@ -95,13 +109,15 @@ def main() -> None:
     parser.add_argument("--candidate-k", type=int, default=DEFAULT_CANDIDATE_K)
     parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K)
     parser.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help="仅用于向量 COSINE 门槛")
+    parser.add_argument("--rerank", action="store_true", help="融合后调重排模型，再截取 top-k")
     parser.add_argument("--category", choices=["data", "policies"])
     parser.add_argument("--document-id", action="append", dest="document_ids")
     args = parser.parse_args()
     try:
         chunks = asyncio.run(retrieve_hybrid(
             args.query, top_k=args.top_k, candidate_k=args.candidate_k, rrf_k=args.rrf_k,
-            min_score=args.min_score, category=args.category, document_ids=args.document_ids,
+            min_score=args.min_score, rerank=args.rerank,
+            category=args.category, document_ids=args.document_ids,
         ))
     except (ValueError, RetrievalUnavailable) as exc:
         parser.exit(status=1, message=f"{exc}\n")

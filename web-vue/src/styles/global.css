@@ -357,6 +357,23 @@ code {
   font-size: 13.5px;
 }
 
+/* 标题 + 右侧操作（「+ 新建」）排一行 */
+.side-head--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 面板里的"加载中"这类单行内容需要自己撑点内边距 */
+.pane-pad {
+  padding: 14px 16px;
+}
+
+.pane-pad > .muted {
+  margin: 0;
+}
+
 .side-empty {
   padding: 20px 14px;
   text-align: center;
@@ -658,6 +675,147 @@ code {
 
 .side-list__item:last-child {
   border-bottom: none;
+}
+
+/* 列表项里放的是整块按钮（会话条目），内边距交给按钮，否则两层一起padding会很挤。 */
+.side-list__item--flush {
+  padding: 0;
+}
+
+.side-list__btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-list__btn:hover:not(:disabled) {
+  background: #f6f7f9;
+}
+
+/* 正看着的那个会话要和别的区分开，否则切来切去不知道自己在哪一条 */
+.side-list__btn--active {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.side-list__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* 会话标题可能是任意长度，单行截断，别把侧栏撑宽 */
+.side-list__title {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-list__time {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+/* ---------- 对话区 ---------- */
+
+/* 消息流自己滚，输入框固定在下边。
+   `max-height` 是必须的：没有它内容一多整页就被拉长，滚动条会跑到浏览器上，
+   输入框跟着被顶出屏幕。 */
+.chat-thread {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 520px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.chat-thread__hint {
+  margin: 0;
+}
+
+/* `column` + `align-self` 就能分左右，不用算百分比宽度 */
+.bubble-row {
+  display: flex;
+}
+
+.bubble-row--user {
+  justify-content: flex-end;
+}
+
+.bubble-row--assistant {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  /* 助手回答里带换行，默认会压成一行 —— 必须保留，否则整段挤成一块 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble--user {
+  border-bottom-right-radius: 4px;
+  background: var(--primary);
+  color: #fff;
+}
+
+.bubble--assistant {
+  border-bottom-left-radius: 4px;
+  background: #f1f3f5;
+  color: var(--text);
+}
+
+/* 还没落库的、正在等的，都用淡一点表示"这是暂定的" */
+.bubble--pending {
+  opacity: 0.7;
+}
+
+/* 本轮的检索依据：贴在消息流下面，输入框上面 */
+.evidence {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.evidence__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.evidence__list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.evidence__list li {
+  margin-top: 2px;
+}
+
+.evidence__title {
+  color: var(--text);
+}
+
+.evidence__source {
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
 }
 
 .side-empty .btn {

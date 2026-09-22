@@ -69,29 +69,7 @@ class RetrievedSourceOut(BaseModel):
 
 
 class MessageTurnOut(BaseModel):
-    """SSE done 事件：本轮最终消息与来源，用于校正前端的临时流式显示。"""
-
     conversation_id: UUID
     messages: list[ChatMessageOut]
     retrieval_status: RetrievalStatus
     retrieved_sources: list[RetrievedSourceOut]
-
-
-class MessageStartOut(BaseModel):
-    conversation_id: UUID
-    message: ChatMessageOut
-
-
-class MessageDeltaOut(BaseModel):
-    message_id: str
-    delta: str
-
-
-class MessageStreamErrorOut(BaseModel):
-    code: Literal["conversation_failed"] = "conversation_failed"
-    message: str
-
-
-MessageStreamEvent = tuple[
-    str, MessageStartOut | MessageDeltaOut | MessageTurnOut | MessageStreamErrorOut,
-]

@@ -9,7 +9,7 @@ import logging
 from langchain_core.messages import SystemMessage
 from langgraph.runtime import Runtime
 
-from supportflow.agents.agent.support_agent import SUPPORT_STREAM_TAG, build_support_agent
+from supportflow.agents.agent.support_agent import build_support_agent
 from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
@@ -107,8 +107,7 @@ async def support_agent(
         knowledge_context=knowledge_context,
     )
     history = state["messages"]
-    # 标记内部 Agent 的模型调用，HTTP messages 流据此排除路由模型输出。
-    result = await agent.ainvoke({"messages": history}, config={"tags": [SUPPORT_STREAM_TAG]})
+    result = await agent.ainvoke({"messages": history})
     # Agent 返回完整历史，只回传本次增量。保留所有 AI 工具调用和 ToolMessage，
     # 不可只取最后一条回复，否则下一轮会丢失工具事实和调用配对。
     return {"messages": result["messages"][len(history):], "next_node": "end"}

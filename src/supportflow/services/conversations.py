@@ -1,22 +1,18 @@
 """会话归属、消息展示和单轮对话；HTTP 不直接操作 checkpoint 或拼接 SQL。"""
 
 import logging
-from collections.abc import AsyncIterator, Sequence
-from contextlib import aclosing, asynccontextmanager
+from collections.abc import Sequence
 from uuid import uuid4
 
-from anyio import CancelScope
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from supportflow.agents.agent.support_agent import SUPPORT_STREAM_TAG
 from supportflow.agents.graph.context import SupportContext
 from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
 from supportflow.schemas.conversations import (
-    ChatMessageOut, ConversationMessagesOut, MessageDeltaOut, MessageStartOut,
-    MessageStreamErrorOut, MessageStreamEvent, MessageTurnOut, RetrievedSourceOut,
+    ChatMessageOut, ConversationMessagesOut, MessageTurnOut, RetrievedSourceOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,11 +91,9 @@ class ConversationChat:
             total=len(messages), offset=offset, limit=limit,
         )
 
-    @asynccontextmanager
-    async def stream_message(
+    async def send_message(
         self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
-    ) -> AsyncIterator[AsyncIterator[MessageStreamEvent]]:
-        """进入时校验并占用会话，退出时关闭图流；由请求级依赖覆盖整个 SSE 生命周期。"""
+    ) -> MessageTurnOut:
         await _require_conversation(db, user_id, conversation_id)
         if conversation_id in self._running:
             raise ConversationError("本会话正在回复，请等待本轮完成", status_code=409)
@@ -110,65 +104,31 @@ class ConversationChat:
             await conversation_repo.touch_conversation(db, user_id, conversation_id)
             await db.commit()
             message = HumanMessage(id=str(uuid4()), content=content)
-            stream = self._stream_reply(db, user_id, conversation_id, message)
             try:
-                yield stream
-            finally:
-                # StreamingResponse 在发送失败时不一定主动关闭迭代器。
-                # shield 让断开连接后的清理能结束，再释放占用和请求数据库会话。
-                with CancelScope(shield=True):
-                    await stream.aclose()
+                state = await self.graph.ainvoke(
+                    {"messages": [message]},
+                    {"configurable": {"thread_id": conversation_id}},
+                    context=SupportContext(user_id, conversation_id, db),
+                )
+                history = state["messages"]
+                # 用本轮用户消息 ID 定位增量，避免向前端重复返回整份历史。
+                start = next(i for i, item in enumerate(history) if item.id == message.id)
+                return MessageTurnOut(
+                    conversation_id=conversation_id,
+                    messages=_public_messages(history[start:]),
+                    retrieval_status=state.get("retrieval_status", "not_requested"),
+                    retrieved_sources=[RetrievedSourceOut(
+                        document_id=item["document_id"], chunk_id=item["chunk_id"],
+                        title=item["title"], source=item["source"],
+                        section=item.get("section"), score=item.get("score"),
+                    ) for item in state.get("retrieved_documents", [])],
+                )
+            except Exception as exc:
+                # 不自动重跑：此前的工具可能已经提交了业务写入。
+                logger.warning("对话执行失败（%s）", type(exc).__name__)
+                raise ConversationError(
+                    "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
+                    status_code=502,
+                ) from exc
         finally:
             self._running.discard(conversation_id)
-
-    async def _stream_reply(
-        self, db: AsyncSession, user_id: int, conversation_id: str, message: HumanMessage,
-    ) -> AsyncIterator[MessageStreamEvent]:
-        config = {"configurable": {"thread_id": conversation_id}}
-        yield "start", MessageStartOut(
-            conversation_id=conversation_id,
-            message=ChatMessageOut(id=message.id, role="user", content=str(message.text)),
-        )
-        try:
-            # 内部 create_agent 是嵌套图，需要 subgraphs=True 才能收到它的模型片段。
-            # v2 统一使用 part["data"]，避免嵌套图改变外层元组结构。
-            async with aclosing(self.graph.astream(
-                {"messages": [message]}, config,
-                context=SupportContext(user_id, conversation_id, db),
-                stream_mode="messages", subgraphs=True, version="v2",
-            )) as events:
-                async for part in events:
-                    chunk, metadata = part["data"]
-                    if SUPPORT_STREAM_TAG not in metadata.get("tags", []):
-                        continue
-                    if not isinstance(chunk, AIMessage):
-                        continue
-                    if chunk.tool_calls or getattr(chunk, "tool_call_chunks", None):
-                        continue
-                    # text 只提取正文，不转发 reasoning_content、工具参数和元数据。
-                    text = str(chunk.text)
-                    if text and chunk.id:
-                        yield "message", MessageDeltaOut(message_id=chunk.id, delta=text)
-
-            # 流结束后读取已保存的最终状态，不再次调用模型。
-            snapshot = await self.graph.aget_state(config)
-            state = snapshot.values
-            history = state["messages"]
-            start = next(i for i, item in enumerate(history) if item.id == message.id)
-            yield "done", MessageTurnOut(
-                conversation_id=conversation_id,
-                messages=_public_messages(history[start:]),
-                retrieval_status=state.get("retrieval_status", "not_requested"),
-                retrieved_sources=[RetrievedSourceOut(
-                    document_id=item["document_id"], chunk_id=item["chunk_id"],
-                    title=item["title"], source=item["source"],
-                    section=item.get("section"), score=item.get("score"),
-                ) for item in state.get("retrieved_documents", [])],
-            )
-        except Exception as exc:
-            # HTTP 流已经开始，只能发送 error 事件；不自动重跑业务。
-            # CancelledError / GeneratorExit 不属于 Exception，会继续向外传播。
-            logger.warning("对话流执行失败（%s）", type(exc).__name__)
-            yield "error", MessageStreamErrorOut(
-                message="本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
-            )

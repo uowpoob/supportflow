@@ -159,3 +159,76 @@ export interface RefundDecisionPayload {
   decision: ApprovalDecision
   comment: string | null
 }
+
+// ------------------------- 会话与消息 -------------------------
+
+/** 对齐 `agents/graph/state.py::RetrievalStatus` —— 本轮检索的结果状态 */
+export type RetrievalStatus = 'not_requested' | 'unavailable' | 'empty' | 'ready'
+
+/** 对齐后端 `schemas/conversations.py::ChatMessageOut` —— 只有这两种角色 */
+export type ChatRole = 'user' | 'assistant'
+
+/**
+ * 一条可展示的消息。
+ *
+ * 后端 `_public_messages` 已经滤掉了 system 提示、工具调用和工具返回，
+ * 到了前端只会是用户的文字或助手的答复 —— **不需要再判断别的角色**。
+ */
+export interface ChatMessage {
+  id: string
+  role: ChatRole
+  content: string
+}
+
+/** 对齐后端 `schemas/conversations.py::ConversationOut` —— 会话的"壳"，不含消息 */
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+/** 对齐后端 `schemas/conversations.py::ConversationPage` */
+export interface ConversationPage {
+  items: Conversation[]
+  total: number
+  offset: number
+  limit: number
+}
+
+/** 对齐后端 `schemas/conversations.py::ConversationMessagesOut` */
+export interface ConversationMessages {
+  conversation_id: string
+  items: ChatMessage[]
+  total: number
+  offset: number
+  limit: number
+}
+
+/** 对齐后端 `schemas/conversations.py::RetrievedSourceOut` —— 本轮召回的候选片段 */
+export interface RetrievedSource {
+  document_id: string
+  chunk_id: string
+  title: string
+  source: string
+  section: string | null
+  score: number | null
+}
+
+/**
+ * 对齐后端 `schemas/conversations.py::MessageTurnOut` —— 一轮对话的增量返回。
+ *
+ * `messages` 里**包含本轮用户自己那条消息**：拿到之后整段接在消息列表尾部即可，
+ * 不要再单独把用户输入也插一遍，否则显示两遍。
+ */
+export interface MessageTurn {
+  conversation_id: string
+  messages: ChatMessage[]
+  retrieval_status: RetrievalStatus
+  retrieved_sources: RetrievedSource[]
+}
+
+/** 对齐后端 `schemas/conversations.py::MessageCreate` —— 只提交这一句话 */
+export interface MessageCreatePayload {
+  content: string
+}
