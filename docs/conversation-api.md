@@ -78,10 +78,12 @@ HTTP 状态码 201 表示会话已创建。创建空会话不会调用模型或�
 `SupportContext(user_id, conversation_id, db)`，其中身份来自认证态，
 MySQL Session 由本次请求持有。图通过同一个 UUID 恢复历史。
 
-这是非流式接口，等待本轮完成后返回 HTTP 200，`data` 包含：
+这是非流式接口，普通对话完成或退款申请进入等待审批时返回 HTTP 200，`data` 包含：
 
 - `conversation_id`：当前 UUID。
 - `messages`：本轮新增的可展示消息，包括用户消息和助手答复，结构同历史接口。
+- `status`：`completed` 或 `waiting_approval`。
+- `pending_request_key`：等待审批时的申请编号；否则为 `null`。
 - `retrieval_status`：本轮 `not_requested` / `ready` / `empty` / `unavailable`。
 - `retrieved_sources`：本轮召回片段的文档 ID、片段 ID、标题、来源、章节及排序分数。
   这是检索候选来源列表，不表示助手实际引用了每个片段；业务对话通常为空列表。
@@ -93,7 +95,7 @@ MySQL Session 由本次请求持有。图通过同一个 UUID 恢复历史。
 | 401 | 未登录或会话失效 |
 | 403 | 当前角色不是客户 |
 | 404 | 会话不存在或不属于当前客户 |
-| 409 | 同一服务进程中，该会话已有一轮对话正在执行 |
+| 409 | 同一服务进程中，该会话已有一轮对话正在执行，或正在等待管理员审批 |
 | 422 | 非法 UUID、分页参数、空白/超长文本或额外请求字段 |
 | 502 | 图或模型执行未完成；响应不暴露底层异常内容 |
 | 503 | 对话服务未就绪或 checkpoint 读取失败 |
@@ -101,6 +103,12 @@ MySQL Session 由本次请求持有。图通过同一个 UUID 恢复历史。
 错误响应使用现有 FastAPI `detail` 格式。图失败不会自动重跑，因为此前的业务工具可能已提交
 退款申请；请先查看历史、订单和退款状态，再决定是否重新发送。MySQL 业务提交与 PostgreSQL
 checkpoint 不构成跨库原子事务，HTTP 失败不代表所有业务操作都已回滚。
+
+退款申请进入 `waiting_approval` 后，同一会话暂不接收新消息。管理员通过现有
+`POST /admin/refund-requests/{request_key}/decision` 审批后，服务尝试恢复同一
+LangGraph `thread_id`，从数据库重读审批结果并追加客户可见消息。审批已经落库但自动恢复失败时，
+管理员可调用 `POST /admin/refund-requests/{request_key}/resume` 重试；重复调用不会重复退款。
+生产环境需配置 PostgreSQL checkpointer，内存回退无法跨进程重启恢复。
 
 当前只有单进程的同会话并发保护，尚无跨进程运行锁、请求幂等键、SSE 或断流恢复协议；
 这一阶段按单个后端进程使用。重复发送是新的用户消息，不保证复用上次执行。

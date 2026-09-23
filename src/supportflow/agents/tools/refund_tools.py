@@ -39,6 +39,7 @@ def _refund_line(row) -> str:
 
 
 def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->list:
+    submitted_request: tuple[str, str, str, str] | None = None
     @tool
     async def list_my_refunds(status: RefundStatus | None = None) -> str:
         """当用户想看自己的退款申请时调用，比如"我的退款申请""我申请退款了没"
@@ -127,9 +128,17 @@ def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->lis
         return "\n".join(lines)
 
 
-    @tool
-    async def post_refund(order_no: str, reason: str) -> str:
+    @tool(response_format="content_and_artifact")
+    async def post_refund(order_no: str, reason: str) -> tuple[str, dict[str, str]]:
         """用户明确要求提交退款，且订单号和原因齐全时调用。"""
+        nonlocal submitted_request
+        # 同一轮模型可能并行调用多个工具；一次只办理一笔，避免留下无法等待的申请。
+        if submitted_request is not None:
+            submitted_order, key, status, submitted_conversation = submitted_request
+            return (
+                f"本轮已为订单 {submitted_order} 提交申请 {key}；订单 {order_no} 未提交，请先等待这笔申请处理完毕。",
+                {"request_key": key, "status": status, "conversation_id": submitted_conversation},
+            )
         request = await create_refund_request(
             db,
             user_id,
@@ -137,6 +146,14 @@ def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->lis
             reason=reason,
             conversation_id=conversation_id,
         )
-        return f"申请编号：{request.request_key}，状态：{request.status.value}"
+        submitted_request = (order_no, request.request_key, request.status.value, request.conversation_id)
+        return (
+            f"申请编号：{request.request_key}，状态：{request.status.value}",
+            {
+                "request_key": request.request_key,
+                "status": request.status.value,
+                "conversation_id": request.conversation_id,
+            },
+        )
     
     return [list_my_refunds, get_refund_detail, get_refund_eligibility,post_refund]

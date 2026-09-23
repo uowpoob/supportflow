@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.agents.graph.context import SupportContext
@@ -100,6 +101,10 @@ class ConversationChat:
         # 检查与添加之间没有 await；同一事件循环中的请求不会同时进入。
         self._running.add(conversation_id)
         try:
+            config = {"configurable": {"thread_id": conversation_id}}
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.values.get("pending_approval"):
+                raise ConversationError("本会话正在等待管理员审批", status_code=409)
             # 收到新消息即更新最近活动时间，并在等待模型前结束这段 MySQL 事务。
             await conversation_repo.touch_conversation(db, user_id, conversation_id)
             await db.commit()
@@ -107,7 +112,7 @@ class ConversationChat:
             try:
                 state = await self.graph.ainvoke(
                     {"messages": [message]},
-                    {"configurable": {"thread_id": conversation_id}},
+                    config,
                     context=SupportContext(user_id, conversation_id, db),
                 )
                 history = state["messages"]
@@ -116,6 +121,8 @@ class ConversationChat:
                 return MessageTurnOut(
                     conversation_id=conversation_id,
                     messages=_public_messages(history[start:]),
+                    status="waiting_approval" if state.get("pending_approval") else "completed",
+                    pending_request_key=state.get("pending_approval"),
                     retrieval_status=state.get("retrieval_status", "not_requested"),
                     retrieved_sources=[RetrievedSourceOut(
                         document_id=item["document_id"], chunk_id=item["chunk_id"],
@@ -130,5 +137,28 @@ class ConversationChat:
                     "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
                     status_code=502,
                 ) from exc
+        finally:
+            self._running.discard(conversation_id)
+
+    async def resume_approval(
+        self, db: AsyncSession, user_id: int, conversation_id: str, request_key: str,
+    ) -> bool:
+        """审批事务提交后恢复暂停图；重复调用或表单申请可安全跳过。"""
+        if conversation_id in self._running:
+            raise ConversationError("本会话正在执行，请稍后重试恢复", status_code=409)
+        self._running.add(conversation_id)
+        try:
+            config = {"configurable": {"thread_id": conversation_id}}
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.values.get("pending_approval") != request_key:
+                return False
+            if "wait_for_approval" not in snapshot.next:
+                raise ConversationError("审批节点尚未暂停，请稍后重试恢复", status_code=409)
+            await self.graph.ainvoke(
+                Command(resume={"request_key": request_key}),
+                config,
+                context=SupportContext(user_id, conversation_id, db),
+            )
+            return True
         finally:
             self._running.discard(conversation_id)

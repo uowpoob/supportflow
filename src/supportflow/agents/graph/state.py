@@ -9,7 +9,7 @@ Intent = Literal[
     "order_query", "refund_request", "refund_query",
     "product_support", "policy_question", "unknown",
 ]
-NextNode = Literal["support_agent", "retrieve_knowledge", "end"]
+NextNode = Literal["support_agent", "retrieve_knowledge", "wait_for_approval", "end"]
 RetrievalStatus = Literal["not_requested", "unavailable", "empty", "ready"]
 
 
@@ -36,6 +36,7 @@ class SupportState(MessagesState):
     knowledge: KnowledgeState
     retrieved_documents: list[RetrievedDocument]
     retrieval_status: RetrievalStatus
+    pending_approval: str | None
 
 
 class SupportStateUpdate(TypedDict, total=False):
@@ -47,6 +48,7 @@ class SupportStateUpdate(TypedDict, total=False):
     knowledge: KnowledgeState
     retrieved_documents: list[RetrievedDocument]
     retrieval_status: RetrievalStatus
+    pending_approval: str | None
 
 
 def initial_state() -> SupportState:
@@ -58,4 +60,5 @@ def initial_state() -> SupportState:
         "knowledge": {"question": None, "product_model": None},
         "retrieved_documents": [],
         "retrieval_status": "not_requested",
+        "pending_approval": None,
     }

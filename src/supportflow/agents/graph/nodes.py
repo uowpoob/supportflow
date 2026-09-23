@@ -6,8 +6,9 @@ State 保存历史；Runtime.context 提供本次执行的身份与数据库连�
 import json
 import logging
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 
 from supportflow.agents.agent.support_agent import build_support_agent
 from supportflow.agents.graph.context import SupportContext
@@ -16,6 +17,8 @@ from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
 from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
 from supportflow.retrieval.types import RetrievalUnavailable
+from supportflow.models.enums import RefundStatus
+from supportflow.services.refunds import get_refund_request_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -110,4 +113,52 @@ async def support_agent(
     result = await agent.ainvoke({"messages": history})
     # Agent 返回完整历史，只回传本次增量。保留所有 AI 工具调用和 ToolMessage，
     # 不可只取最后一条回复，否则下一轮会丢失工具事实和调用配对。
-    return {"messages": result["messages"][len(history):], "next_node": "end"}
+    added = result["messages"][len(history):]
+    submitted = [
+        message.artifact["request_key"]
+        for message in added
+        if isinstance(message, ToolMessage)
+        and message.name == "post_refund"
+        and isinstance(message.artifact, dict)
+        and message.artifact.get("status") == RefundStatus.PENDING.value
+        and message.artifact.get("conversation_id") == context.conversation_id
+    ]
+    if len(set(submitted)) > 1:
+        raise ValueError("同一轮提交了多个待审批申请")
+    return {
+        "messages": added,
+        "pending_approval": submitted[0] if submitted else None,
+        "next_node": "wait_for_approval" if submitted else "end",
+    }
+
+
+async def wait_for_approval(
+    state: SupportState, runtime: Runtime[SupportContext],
+) -> SupportStateUpdate:
+    """只在外层图暂停；恢复后以 MySQL 的审批结果为准。"""
+    request_key = state["pending_approval"]
+    if not request_key:
+        raise ValueError("缺少待审批申请编号")
+    signal = interrupt({"type": "refund_approval", "request_key": request_key})
+    if not isinstance(signal, dict) or signal.get("request_key") != request_key:
+        raise ValueError("审批恢复信号与申请不匹配")
+
+    context = runtime.context
+    view = await get_refund_request_for_user(context.db, context.user_id, request_key)
+    if view is None or view.request.conversation_id != context.conversation_id:
+        raise ValueError("审批申请与当前会话不匹配")
+    if view.request.status == RefundStatus.PENDING:
+        raise ValueError("申请仍在待审批状态")
+    if view.request.status == RefundStatus.REJECTED:
+        text = f"申请 {request_key} 未获批准。"
+        if view.approval and view.approval.comment:
+            text += f"审批备注：{view.approval.comment}"
+    elif view.request.status == RefundStatus.REFUNDED:
+        text = f"申请 {request_key} 已获批准，模拟退款已完成。"
+    else:
+        text = f"申请 {request_key} 已获批准，当前状态：{view.request.status.value}。"
+    return {
+        "messages": [AIMessage(content=text)],
+        "pending_approval": None,
+        "next_node": "end",
+    }

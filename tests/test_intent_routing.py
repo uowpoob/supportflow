@@ -22,6 +22,7 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import initial_state
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
 from supportflow.agents.tools import order_tools, refund_tools
+from supportflow.services import conversations as conversation_service
 
 
 def mock_router(monkeypatch, intent, **kwargs):
@@ -238,26 +239,86 @@ async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(mo
 
 
 @pytest.mark.asyncio
-async def test_refund_tool_uses_runtime_identity_and_conversation(monkeypatch):
+@pytest.mark.parametrize("decision_status,expected", [
+    (refund_tools.RefundStatus.REFUNDED, "模拟退款已完成"),
+    (refund_tools.RefundStatus.REJECTED, "未获批准"),
+])
+async def test_refund_tool_uses_runtime_identity_and_conversation(monkeypatch, decision_status, expected):
+    mock_router(monkeypatch, "refund_request")
+    use_model(monkeypatch, [
+        AIMessage(content="", tool_calls=[
+            {"name": "post_refund", "args": {"order_no": "1260918430020004", "reason": "不喜欢"}, "id": "submit-1"},
+            {"name": "post_refund", "args": {"order_no": "1260918430020005", "reason": "故障"}, "id": "submit-2"},
+        ]),
+        AIMessage(content="已提交申请 rq-1"),
+    ])
+    conversation_id = "11111111-1111-4111-8111-111111111111"
+    create = AsyncMock(return_value=SimpleNamespace(
+        request_key="rq-1", status=SimpleNamespace(value="pending"),
+        conversation_id=conversation_id,
+    ))
+    monkeypatch.setattr(refund_tools, "create_refund_request", create)
+    view = SimpleNamespace(
+        request=SimpleNamespace(conversation_id=conversation_id, status=decision_status),
+        approval=SimpleNamespace(comment="同意退款"),
+    )
+    lookup = AsyncMock(return_value=view)
+    monkeypatch.setattr(nodes, "get_refund_request_for_user", lookup)
+    ctx = SupportContext(4, conversation_id, Mock(spec=AsyncSession))
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": ctx.conversation_id}}
+    chat = conversation_service.ConversationChat(graph)
+    monkeypatch.setattr(conversation_service, "_require_conversation", AsyncMock())
+    monkeypatch.setattr(conversation_service.conversation_repo, "touch_conversation", AsyncMock())
+    turn = await chat.send_message(
+        ctx.db, ctx.user_id, ctx.conversation_id, "请提交 1260918430020004 退款，原因不喜欢",
+    )
+    assert create.await_count == 1
+    assert create.await_args.args == (ctx.db, ctx.user_id)
+    assert create.await_args.kwargs["conversation_id"] == ctx.conversation_id
+    assert create.await_args.kwargs["order_no"] in {"1260918430020004", "1260918430020005"}
+    assert turn.status == "waiting_approval"
+    assert turn.pending_request_key == "rq-1"
+    state = (await graph.aget_state(config)).values
+    assert state["messages"][2].tool_call_id == "submit-1"
+    assert any("本轮已为订单" in message.text for message in state["messages"][2:4])
+    assert state["pending_approval"] == "rq-1"
+    assert graph.get_graph().nodes.get("wait_for_approval") is not None
+    assert (await graph.aget_state(config)).next == ("wait_for_approval",)
+
+    with pytest.raises(conversation_service.ConversationError, match="等待管理员审批"):
+        await chat.send_message(ctx.db, ctx.user_id, ctx.conversation_id, "再发一条")
+    assert await chat.resume_approval(ctx.db, ctx.user_id, ctx.conversation_id, "rq-1")
+    assert not await chat.resume_approval(ctx.db, ctx.user_id, ctx.conversation_id, "rq-1")
+    resumed = (await graph.aget_state(config)).values
+    assert resumed["pending_approval"] is None
+    assert expected in resumed["messages"][-1].text
+    assert (await graph.aget_state(config)).next == ()
+    create.assert_awaited_once()
+    lookup.assert_awaited_once_with(ctx.db, ctx.user_id, "rq-1")
+
+
+@pytest.mark.asyncio
+async def test_existing_refund_from_another_conversation_does_not_pause(monkeypatch):
     mock_router(monkeypatch, "refund_request")
     use_model(monkeypatch, [
         AIMessage(content="", tool_calls=[{
-            "name": "post_refund", "args": {"order_no": "1260918430020004", "reason": "不喜欢"}, "id": "submit-1",
+            "name": "post_refund", "args": {"order_no": "1260918430020004", "reason": "不喜欢"}, "id": "submit-old",
         }]),
-        AIMessage(content="已提交申请 rq-1"),
+        AIMessage(content="这笔申请已在另一条会话中等待审批。"),
     ])
-    create = AsyncMock(return_value=SimpleNamespace(
-        request_key="rq-1", status=SimpleNamespace(value="pending"),
-    ))
-    monkeypatch.setattr(refund_tools, "create_refund_request", create)
-    ctx = context()
-    result = await build_support_graph().ainvoke(
-        {"messages": [("user", "请提交 1260918430020004 退款，原因不喜欢")]}, context=ctx,
+    monkeypatch.setattr(refund_tools, "create_refund_request", AsyncMock(return_value=SimpleNamespace(
+        request_key="rq-old", status=SimpleNamespace(value="pending"),
+        conversation_id="22222222-2222-4222-8222-222222222222",
+    )))
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "11111111-1111-4111-8111-111111111111"}}
+    result = await graph.ainvoke(
+        {"messages": [("user", "申请退款")]}, config,
+        context=SupportContext(4, config["configurable"]["thread_id"], Mock(spec=AsyncSession)),
     )
-    create.assert_awaited_once_with(
-        ctx.db, ctx.user_id, order_no="1260918430020004", reason="不喜欢", conversation_id=ctx.conversation_id,
-    )
-    assert result["messages"][2].tool_call_id == "submit-1"
+    assert result["pending_approval"] is None
+    assert (await graph.aget_state(config)).next == ()
 
 
 @pytest.mark.asyncio

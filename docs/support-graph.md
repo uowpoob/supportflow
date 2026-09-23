@@ -19,25 +19,29 @@ graph TD;
 	understand_and_route(understand_and_route)
 	retrieve_knowledge(retrieve_knowledge)
 	support_agent(support_agent)
+	wait_for_approval(wait_for_approval)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> understand_and_route;
 	retrieve_knowledge --> support_agent;
 	understand_and_route -.-> retrieve_knowledge;
 	understand_and_route -.-> support_agent;
-	support_agent --> __end__;
+	support_agent -.-> wait_for_approval;
+	support_agent -.-> __end__;
+	wait_for_approval --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 
 ```
 
-## 三个节点
+## 四个节点
 
 | 节点 | 职责 | 当前实现 |
 | --- | --- | --- |
 | understand_and_route | 结合消息历史识别需求，整理知识问题；由代码决定出口 | 已实现 |
 | retrieve_knowledge | 按问题召回文档，型号补入查询文本，返回带来源的片段 | 已接向量 + BM25 双路召回与 RRF，返回 `ready` / `empty` / `unavailable` |
 | support_agent | 同时使用订单、退款的 7 个工具；追问或答复；有文档时根据本轮证据回答 | 已接入统一 Agent |
+| wait_for_approval | 退款申请待审批时暂停；管理员决策后重读业务状态并追加回复 | 已实现 |
 
 普通订单 / 退款需求和不明确的需求直接交给 `support_agent`，由它完成追问。
 商品使用和通用政策问题经过检索节点后，也由同一个 Agent 回答。
@@ -54,6 +58,7 @@ graph TD;
 | knowledge | 本轮完整检索问题和商品型号 |
 | retrieved_documents | 本轮文档片段及来源，整体替换 |
 | retrieval_status | `not_requested` 未请求；`unavailable` 尚不可用；`empty` 无匹配；`ready` 有结果 |
+| pending_approval | 当前会话等待管理员审批的退款申请编号；恢复后清空 |
 
 移除了此前用于两个 Agent 交接的 `order`、`refund` 子状态。
 订单确认、原因、取消等对话信息由统一 Agent 从消息历史理解；真实业务状态仍以数据库和工具结果为准。
@@ -98,7 +103,7 @@ async with SessionLocal() as db:
 提交退款时，`conversation_id` 必须是业务库中属于当前用户的真实会话 ID。
 `END` 只结束本轮；下一轮用同一 `thread_id` 恢复历史。
 总图保存 checkpoint，内部 Agent 设置 `checkpointer=False`，避免两层重复管理历史。
-此设置也会关闭内部 Agent 的逐步持久化（参见 [LangGraph Checkpointer 文档](https://reference.langchain.com/python/langgraph/types/Checkpointer)）；当前没有实现工具执行到一半的中断恢复。
+此设置也会关闭内部 Agent 的逐步持久化（参见 [LangGraph Checkpointer 文档](https://reference.langchain.com/python/langgraph/types/Checkpointer)）。退款工具提交待审批申请后，外层图在独立的 `wait_for_approval` 节点中断；恢复该节点不会重跑提交工具。
 Agent 节点回传全部新增消息，包括成对的工具调用和结果，不只返回最后一句话。
 本轮检索资料临时加入系统提示，不追加为长期历史消息；以后每轮咨询重新检索。
 

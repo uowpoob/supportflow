@@ -15,6 +15,10 @@ def after_understanding(state: SupportState) -> str:
     return destination
 
 
+def after_agent(state: SupportState) -> str:
+    return "wait_for_approval" if state.get("pending_approval") else "end"
+
+
 def build_support_graph(*, checkpointer: BaseCheckpointSaver | None = None):
     """只构造图；HTTP 服务启动时构建并复用，执行时传入本次 SupportContext。
 
@@ -24,6 +28,7 @@ def build_support_graph(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("understand_and_route", nodes.understand_and_route)
     graph.add_node("retrieve_knowledge", nodes.retrieve_knowledge)
     graph.add_node("support_agent", nodes.support_agent)
+    graph.add_node("wait_for_approval", nodes.wait_for_approval)
 
     graph.add_edge(START, "understand_and_route")
     graph.add_conditional_edges("understand_and_route", after_understanding, {
@@ -31,5 +36,8 @@ def build_support_graph(*, checkpointer: BaseCheckpointSaver | None = None):
         "retrieve_knowledge": "retrieve_knowledge",
     })
     graph.add_edge("retrieve_knowledge", "support_agent")
-    graph.add_edge("support_agent", END)
+    graph.add_conditional_edges("support_agent", after_agent, {
+        "wait_for_approval": "wait_for_approval", "end": END,
+    })
+    graph.add_edge("wait_for_approval", END)
     return graph.compile(checkpointer=checkpointer)

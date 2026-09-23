@@ -71,5 +71,7 @@ class RetrievedSourceOut(BaseModel):
 class MessageTurnOut(BaseModel):
     conversation_id: UUID
     messages: list[ChatMessageOut]
+    status: Literal["completed", "waiting_approval"]
+    pending_request_key: str | None = None
     retrieval_status: RetrievalStatus
     retrieved_sources: list[RetrievedSourceOut]

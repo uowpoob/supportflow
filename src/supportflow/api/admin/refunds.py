@@ -12,7 +12,9 @@
 拿它当待办会永远查出空数组。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.api.auth.deps import require_admin
@@ -31,6 +33,7 @@ from supportflow.schemas.refunds import (
     RefundRecordPage,
 )
 from supportflow.schemas.result import Success
+from supportflow.services.conversations import ConversationError
 from supportflow.services.refunds import (
     RefundError,
     decide_refund_request,
@@ -41,6 +44,7 @@ from supportflow.services.refunds import (
 )
 
 router = APIRouter(tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/refund-requests", response_model=Success[AdminRefundRequestPage])
@@ -94,6 +98,7 @@ async def get_refund_request(
 async def decide_refund_request_endpoint(
     request_key: str,
     payload: RefundDecisionIn,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Success[AdminRefundRequestDetail]:
@@ -125,6 +130,43 @@ async def decide_refund_request_endpoint(
     # 返回决策后的完整详情，前端直接拿它替换本地状态，不用再发一次 GET。
     view = await get_refund_request_any(db, request_key)
     assert view is not None
+    # 审批已提交；图恢复失败不回滚业务决策，可用下方恢复接口重试。
+    await db.commit()
+    chat = getattr(request.app.state, "conversation_chat", None)
+    if chat is not None:
+        try:
+            await chat.resume_approval(
+                db, view.order.user_id, view.request.conversation_id, request_key,
+            )
+        except Exception:
+            logger.exception("审批已提交，但会话恢复失败：%s", request_key)
+    return Success[AdminRefundRequestDetail](data=AdminRefundRequestDetail.from_view(view))
+
+
+@router.post("/refund-requests/{request_key}/resume", response_model=Success[AdminRefundRequestDetail])
+async def resume_refund_approval_endpoint(
+    request_key: str,
+    request: Request,
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Success[AdminRefundRequestDetail]:
+    """审批已落库而图恢复失败时手动重试；重复恢复安全。"""
+    view = await get_refund_request_any(db, request_key)
+    if view is None:
+        raise HTTPException(status_code=404, detail="退款申请不存在")
+    if view.request.status == RefundStatus.PENDING:
+        raise HTTPException(status_code=409, detail="申请尚未审批")
+    await db.commit()
+    chat = getattr(request.app.state, "conversation_chat", None)
+    if chat is None:
+        raise HTTPException(status_code=503, detail="对话服务尚未就绪")
+    try:
+        await chat.resume_approval(db, view.order.user_id, view.request.conversation_id, request_key)
+    except ConversationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except Exception as exc:
+        logger.exception("恢复审批会话失败：%s", request_key)
+        raise HTTPException(status_code=503, detail="会话恢复失败，请稍后重试") from exc
     return Success[AdminRefundRequestDetail](data=AdminRefundRequestDetail.from_view(view))
 
 
