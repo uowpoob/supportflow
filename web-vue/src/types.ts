@@ -216,6 +216,15 @@ export interface RetrievedSource {
 }
 
 /**
+ * 对齐后端 `schemas/conversations.py::MessageTurnOut::status`。
+ *
+ * - `completed`：这一轮跑完了，可以继续提问。
+ * - `waiting_approval`：Agent 提交了退款申请，整张图**暂停**在那里等管理员决策；
+ *   这期间再发消息后端会返回 409，界面必须自己把输入框锁上。
+ */
+export type MessageTurnStatus = 'completed' | 'waiting_approval'
+
+/**
  * 对齐后端 `schemas/conversations.py::MessageTurnOut` —— 一轮对话的增量返回。
  *
  * `messages` 里**包含本轮用户自己那条消息**：拿到之后整段接在消息列表尾部即可，
@@ -224,6 +233,10 @@ export interface RetrievedSource {
 export interface MessageTurn {
   conversation_id: string
   messages: ChatMessage[]
+  /** 本轮结束时图是停住了还是在等审批 */
+  status: MessageTurnStatus
+  /** `waiting_approval` 时是那张暂停的申请编号；否则为 null */
+  pending_request_key: string | null
   retrieval_status: RetrievalStatus
   retrieved_sources: RetrievedSource[]
 }

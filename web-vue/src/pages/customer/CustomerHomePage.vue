@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import {
@@ -50,6 +50,24 @@ const turnSources = ref<RetrievedSource[]>([])
 
 const creating = ref(false)
 
+/**
+ * 会话被"暂停"在图里等管理员审批 —— 这是后端 `wait_for_approval` 节点的中断态。
+ *
+ * 三条约定（都跟后端契约绑定，别自己加戏）：
+ * - 暂停期间**发消息一定被后端 409 挡回来**，所以输入框必须锁上，别让用户白点。
+ * - 审批完成后由**服务端**往这条会话追加一条回复，前端只是把它读回来：
+ *   非流式接口没有推送，只能隔几秒问一次历史接口。
+ * - 刷新页面会丢掉"正在等待"这个界面状态（历史接口不返回它），
+ *   这时靠"发一条被 409 挡回来"重新认出来。
+ */
+const waiting = ref(false)
+/** 暂停中的那张申请编号；靠 409 反推出来的那次拿不到编号，为 null。 */
+const waitingRequestKey = ref<string | null>(null)
+/** 开始等待那一刻已有多少条消息 —— 审批结果一到，条数就比它多。 */
+let waitingBaseline = 0
+/** 轮询句柄；不用 `ref`，它只影响行为不影响界面。 */
+let poller: ReturnType<typeof setInterval> | null = null
+
 // ------------------------- 会话列表 -------------------------
 
 // limit 给 50：会话是越用越多的东西，首页只做入口，不做分页浏览。
@@ -89,12 +107,22 @@ watch(selectedId, () => {
   turnStatus.value = null
   turnSources.value = []
   sendError.value = ''
+  // 等待审批属于"某一条会话"，换了会话就不再成立了。
+  stopWaiting()
 })
+
+// 离开这个页面时把定时器收干净，否则它会在后台一直打接口。
+onUnmounted(stopWaiting)
 
 // ------------------------- 发送 -------------------------
 
 const canSend = computed(
-  () => selectedId.value !== null && draft.value.trim() !== '' && !sending.value,
+  () =>
+    selectedId.value !== null
+    && draft.value.trim() !== ''
+    && !sending.value
+    // 暂停中的会话发出去也只会拿到 409，干脆别让点。
+    && !waiting.value,
 )
 
 /**
@@ -111,6 +139,42 @@ function appendMessages(incoming: ChatMessage[]): void {
     messages.value.push(message)
   }
 }
+
+/**
+ * 进入"等待审批"：锁输入框 + 每几秒重读一次历史。
+ *
+ * 为什么轮询而不是等推送：这个接口是非流式的，审批发生在**另一个人的浏览器**上
+ * （管理员），服务端没有任何通道能通知到这里。间隔取 4 秒是折中 —— 真等到了也就慢几秒，
+ * 用户一直不处理也不会把接口打爆。
+ */
+function startWaiting(requestKey: string | null): void {
+  waiting.value = true
+  waitingRequestKey.value = requestKey
+  waitingBaseline = messages.value.length
+  if (poller !== null) return
+  poller = setInterval(() => {
+    // 正在发消息时别插队，那一轮自己会带回结果。
+    if (!sending.value) reloadMessages()
+  }, 4000)
+}
+
+/** 离开"等待审批"：解锁输入框并停掉轮询。 */
+function stopWaiting(): void {
+  waiting.value = false
+  waitingRequestKey.value = null
+  if (poller !== null) {
+    clearInterval(poller)
+    poller = null
+  }
+}
+
+// 轮询把历史读回来之后，只要消息变多了，就说明管理员已经决策、服务端把结果追加进来了。
+watch(
+  () => messages.value.length,
+  (count) => {
+    if (waiting.value && count > waitingBaseline) stopWaiting()
+  },
+)
 
 async function send(): Promise<void> {
   const content = draft.value.trim()
@@ -133,6 +197,12 @@ async function send(): Promise<void> {
       appendMessages(turn.messages)
       turnStatus.value = turn.retrieval_status
       turnSources.value = turn.retrieved_sources
+      // 这一轮是不是把图停在"等管理员审批"了，由后端说了算（`status` 字段）。
+      if (turn.status === 'waiting_approval') {
+        startWaiting(turn.pending_request_key)
+      } else {
+        stopWaiting()
+      }
     }
     // 后端已经更新了会话的最近活动时间，列表顺序要跟着动。
     reloadList()
@@ -141,6 +211,12 @@ async function send(): Promise<void> {
     // 把输入还回去，让用户看过错误之后再决定。
     draft.value = content
     sendError.value = err instanceof ApiError ? err.message : '消息发送失败'
+    // 刷新页面后界面上没有"正在等待"这个状态（历史接口不返回它），
+    // 但后端一挡就是 409 —— 拿这个当信号把状态补回来，不然用户会一直点、一直失败。
+    if (err instanceof ApiError && err.status === 409 && err.message.includes('审批')) {
+      sendError.value = ''
+      startWaiting(null)
+    }
   } finally {
     optimistic.value = ''
     sending.value = false
@@ -248,13 +324,30 @@ function selectConversation(id: string): void {
             <ErrorAlert :message="sendError" />
           </div>
 
+          <!-- 会话被暂停：Agent 已提交退款申请，图停在那里等管理员决策。
+               这期间输入框必须锁上 —— 后端会返回 409，按钮能点就是骗人。 -->
+          <div v-if="waiting" class="pane-pad">
+            <div class="alert alert--warn alert--row">
+              <span>
+                这个会话已暂停，正在等待管理员审批（申请编号
+                {{ waitingRequestKey ?? '见「我的退款申请」' }}）。
+                批准或拒绝之后，结果会自动出现在上面的对话里。
+              </span>
+              <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
+                刷新
+              </button>
+            </div>
+          </div>
+
           <form class="composer" @submit.prevent="send">
             <input
               v-model="draft"
               class="composer__input"
-              :disabled="sending"
+              :disabled="sending || waiting"
               maxlength="8000"
-              placeholder="问点什么，比如「索尼 WH-1000XM5 怎么用有线模式」"
+              :placeholder="waiting
+                ? '正在等待管理员审批，这一轮结束前不能发新消息'
+                : '问点什么，比如「索尼 WH-1000XM5 怎么用有线模式」'"
             />
             <button type="submit" class="btn btn--primary" :disabled="!canSend">
               {{ sending ? '回复中…' : '发送' }}
@@ -268,6 +361,7 @@ function selectConversation(id: string): void {
       <ul class="plain-list">
         <li>流式输出：现在是<strong>非流式</strong>，要等整轮（模型 + 工具 + 检索）跑完才一次性出结果。</li>
         <li>断线恢复：发送过程中刷新页面，这一轮就看不到了，重进会话才会从历史里读回来。</li>
+        <li>等待审批的状态：刷新页面后界面认不出来（历史接口还没返回这个字段），要等下次发送被 409 挡回来才知道。</li>
       </ul>
     </PlaceholderBlock>
   </div>

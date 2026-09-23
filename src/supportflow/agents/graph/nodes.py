@@ -6,7 +6,7 @@ State 保存历史；Runtime.context 提供本次执行的身份与数据库连�
 import json
 import logging
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
@@ -21,6 +21,17 @@ from supportflow.models.enums import RefundStatus
 from supportflow.services.refunds import get_refund_request_for_user
 
 logger = logging.getLogger(__name__)
+
+
+def _routing_history(messages):
+    """挑出给意图识别看的消息：只要用户说了什么、助手答了什么。
+    """
+    return [
+        message
+        for message in messages
+        if isinstance(message, HumanMessage)
+        or (isinstance(message, AIMessage) and not message.tool_calls)
+    ]
 
 
 def _get_router_model():
@@ -44,7 +55,7 @@ async def understand_and_route(
 
     result = await _get_router_model().ainvoke([
         SystemMessage(content=ROUTING_SYSTEM_PROMPT),
-        *state["messages"],
+        *_routing_history(state["messages"]),
     ])
     needs_knowledge = result.intent in ("product_support", "policy_question")
     return {

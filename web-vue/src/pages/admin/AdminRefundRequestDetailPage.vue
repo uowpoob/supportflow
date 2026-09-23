@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
-import { decideRefundRequest, fetchRefundRequest } from '../../api/admin'
+import { decideRefundRequest, fetchRefundRequest, resumeRefundApproval } from '../../api/admin'
 import { ApiError } from '../../api/client'
 import { useApi } from '../../composables/useApi'
 import ErrorAlert from '../../components/common/ErrorAlert.vue'
@@ -49,6 +49,31 @@ async function decide(decision: ApprovalDecision): Promise<void> {
     submitting.value = false
   }
 }
+
+const resuming = ref(false)
+const resumeNotice = ref('')
+
+/**
+ * 手动重试"把客户的会话推一步"。
+ *
+ * 审批接口提交决策后会自己尝试恢复，正常情况下这里不需要点。
+ * 只有那一步失败（后端日志里是 `审批已提交，但会话恢复失败`）时才有用 ——
+ * 所以它不该做成这一步的主路径，界面上也只放在已决策之后。
+ */
+async function resumeConversation(): Promise<void> {
+  if (resuming.value) return
+  resuming.value = true
+  actionError.value = ''
+  resumeNotice.value = ''
+  try {
+    await resumeRefundApproval(requestKey)
+    resumeNotice.value = '已请求恢复客户会话。若客户那边没有立刻更新，让 TA 刷新一下会话即可。'
+  } catch (err) {
+    actionError.value = err instanceof ApiError ? err.message : '恢复客户会话失败'
+  } finally {
+    resuming.value = false
+  }
+}
 </script>
 
 <template>
@@ -77,6 +102,8 @@ async function decide(decision: ApprovalDecision): Promise<void> {
             写退款流水、把订单标成已退款。批准前会再核对一次归属、支付状态和实付金额，
             对不上就拒绝执行并给出原因。
             审批人取自登录态，请求体里没有 <code>admin_id</code>，伪造不了。
+            如果这条申请是客户在对话里提交的，批准或拒绝之后服务端会顺带把那条会话推一步，
+            客户会在自己的对话里看到结果。
           </StubNotice>
 
           <div class="field">
@@ -119,6 +146,26 @@ async function decide(decision: ApprovalDecision): Promise<void> {
           已生效的决策不能被覆盖。重复提交<strong>相同</strong>的决策是幂等的（返回当前结果），
           用<strong>不同</strong>的决策去打会返回 409。
         </p>
+
+        <!-- 审批已落库之后才可能出现这条分支：客户那条会话没被推起来时手动重试。 -->
+        <template v-if="!decidable">
+          <p v-if="actionError" class="alert alert--error">{{ actionError }}</p>
+          <p v-if="resumeNotice" class="alert alert--info">{{ resumeNotice }}</p>
+          <div class="page-actions">
+            <button
+              type="button"
+              class="btn btn--ghost"
+              :disabled="resuming"
+              @click="resumeConversation"
+            >
+              {{ resuming ? '恢复中…' : '重试恢复客户会话' }}
+            </button>
+          </div>
+          <p class="muted">
+            客户会话被暂停在退款申请那一步，审批完成后由服务端推它继续。
+            如果客户说没收到审批结果，点上面的按钮再推一次 —— 重复点不会重复退款。
+          </p>
+        </template>
       </section>
 
       <RefundRequestSections :data="data" />

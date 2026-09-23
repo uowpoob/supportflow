@@ -33,7 +33,7 @@ from supportflow.schemas.refunds import (
     RefundRecordPage,
 )
 from supportflow.schemas.result import Success
-from supportflow.services.conversations import ConversationError
+from supportflow.services.conversations import ConversationChat, ConversationError
 from supportflow.services.refunds import (
     RefundError,
     decide_refund_request,
@@ -132,7 +132,7 @@ async def decide_refund_request_endpoint(
     assert view is not None
     # 审批已提交；图恢复失败不回滚业务决策，可用下方恢复接口重试。
     await db.commit()
-    chat = getattr(request.app.state, "conversation_chat", None)
+    chat: ConversationChat | None = getattr(request.app.state, "conversation_chat", None)
     if chat is not None:
         try:
             await chat.resume_approval(
@@ -157,7 +157,7 @@ async def resume_refund_approval_endpoint(
     if view.request.status == RefundStatus.PENDING:
         raise HTTPException(status_code=409, detail="申请尚未审批")
     await db.commit()
-    chat = getattr(request.app.state, "conversation_chat", None)
+    chat: ConversationChat | None = getattr(request.app.state, "conversation_chat", None)
     if chat is None:
         raise HTTPException(status_code=503, detail="对话服务尚未就绪")
     try:

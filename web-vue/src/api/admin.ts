@@ -68,6 +68,20 @@ export function decideRefundRequest(
   )
 }
 
+/**
+ * POST /admin/refund-requests/{request_key}/resume —— 手动重试恢复客户会话。
+ *
+ * 正常路径用不到：审批接口提交决策后会自己尝试恢复那条暂停的会话。
+ * 只有"审批已经落库、但恢复那一步失败了"（日志里有 `审批已提交，但会话恢复失败`）才需要点它，
+ * 或者客户换了浏览器、进程重启导致内存态丢失时用。
+ * 重复调用是安全的：没有暂停中的会话就直接返回，不会重复退款、也不会重复追加消息。
+ */
+export function resumeRefundApproval(requestKey: string): Promise<AdminRefundRequestDetail> {
+  return http.post<AdminRefundRequestDetail>(
+    `/admin/refund-requests/${encodeParam(requestKey)}/resume`,
+  )
+}
+
 /** GET /admin/refund-approvals —— 审批记录（只有被决策过的申请才有行，审计用） */
 export async function fetchRefundApprovals(query: PageQuery = {}): Promise<ListResult> {
   return normalizeList(await http.get<unknown>(`/admin/refund-approvals${pageQuery(query)}`))
