@@ -10,9 +10,11 @@ import type {
   PageQuery,
   RefundEligibility,
   RefundRequestCreatePayload,
+  StreamEvent,
 } from '../types'
-import { http } from './client'
+import { ApiError, http, openPostStream } from './client'
 import { encodeParam, normalizeList, pageQuery } from './list'
+import { parseSseChunk, type SseEvent } from './sse'
 
 /**
  * 客户侧接口，与后端 `api/customer/*.py` 一一对应。
@@ -108,4 +110,81 @@ export function sendConversationMessage(conversationId: string, content: string)
     `/customer/conversations/${encodeParam(conversationId)}/messages`,
     payload,
   )
+}
+
+/**
+ * POST /customer/conversations/{id}/messages/stream —— 流式发一条消息。
+ *
+ * 后端一个 SSE 连接里只发两种事件（见 `api/customer/conversations.py`）：
+ *
+ *     event: delta   data: {"text": "增量文字"}
+ *     event: done    data: {…整个 MessageTurnOut…}
+ *
+ * 也就是说：`delta` 是模型正在往外吐的字，`done` 是本轮跑完后**跟非流式接口
+ * 一模一样的那个对象**。前端不用自己拼结果，拿到 `done` 直接当非流式的结果用。
+ *
+ * 注意点：
+ * - 只有 `delta` 里的字是模型已经说出口的；**工具调用、检索过程都没有事件**，
+ *   所以"发出去 → 第一个字到"之间仍然是一段没有反馈的空白。
+ * - 出错时后端不会走 HTTP 状态码（响应的 200 已经发出去了），而是直接断流；
+ *   调用方要靠"stream 结束但没等到 done"来判断这一轮失败。
+ * - 传 `signal` 可以中途取消（组件卸载时用），取消后后端也会跟着停。
+ */
+export async function* streamConversationMessage(
+  conversationId: string,
+  content: string,
+  signal?: AbortSignal,
+): AsyncGenerator<StreamEvent> {
+  const payload: MessageCreatePayload = { content }
+  const response = await openPostStream(
+    `/customer/conversations/${encodeParam(conversationId)}/messages/stream`,
+    payload,
+  )
+  if (signal !== undefined) {
+    // 已经取消过了就直接结束，别白读一遍。
+    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
+  }
+
+  const reader = response.body?.getReader()
+  if (reader === undefined) {
+    throw new ApiError(response.status, '后端没有返回流式响应体')
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+
+      const { events, carry } = parseSseChunk(buffer)
+      buffer = carry
+      for (const item of events) {
+        yield toStreamEvent(item)
+      }
+    }
+
+    // 收尾：最后一段可能没有以空行结尾。
+    buffer += decoder.decode()
+    const { events } = parseSseChunk(buffer, true)
+    for (const item of events) {
+      yield toStreamEvent(item)
+    }
+  } finally {
+    // 取消或异常时别把连接挂着。
+    await reader.cancel().catch(() => undefined)
+  }
+}
+
+/** SSE 事件 -> 业务事件；认不出来的事件直接丢掉（不猜、不报错）。 */
+function toStreamEvent(item: SseEvent): StreamEvent {
+  if (item.event === 'delta') {
+    const payload = JSON.parse(item.data) as { text?: unknown }
+    return { type: 'delta', text: typeof payload.text === 'string' ? payload.text : '' }
+  }
+  if (item.event === 'done') {
+    return { type: 'done', turn: JSON.parse(item.data) as MessageTurn }
+  }
+  return { type: 'unknown', event: item.event }
 }

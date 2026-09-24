@@ -13,10 +13,18 @@ import type { ChatMessage } from '../../types'
  */
 const props = defineProps<{
   messages: ChatMessage[]
-  /** 正在等本轮回复 */
+  /** 正在等本轮回复（还没拿到第一个字） */
   pending?: boolean
   /** 刚发出去、还没落库的那句话，先显示出来 */
   optimistic?: string
+  /**
+   * 流式进行中的助手文字，**逐字增长**。
+   *
+   * 它跟 `messages` 是两回事：`messages` 里的东西服务端已经存好了，
+   * 而这个只是屏幕上暂时长出来的草稿 —— 本轮结束（`done` 事件）时会整段
+   * 被服务端返回的消息替换掉，所以不用也不能在这里给它 id。
+   */
+  streaming?: string
 }>()
 
 const scroller = ref<HTMLElement | null>(null)
@@ -28,8 +36,12 @@ async function scrollToBottom(): Promise<void> {
   if (element) element.scrollTop = element.scrollHeight
 }
 
-// 消息一变就滚到底 —— 最新的一条总在视野里。
-watch(() => [props.messages.length, props.pending, props.optimistic], scrollToBottom)
+// 消息一变就滚到底 —— 最新的那条总在视野里。
+// ⚠️ `streaming` 也要盯着：逐字增长时高度一直在变，不滚的话新字会顶到视野外面。
+watch(
+  () => [props.messages.length, props.pending, props.optimistic, props.streaming],
+  scrollToBottom,
+)
 
 // 刚打开一个会话时也要在底部（此时消息是"已存在"的，上面的 watch 不会触发）。
 onMounted(scrollToBottom)
@@ -38,7 +50,7 @@ onMounted(scrollToBottom)
 <template>
   <div ref="scroller" class="chat-thread">
     <p
-      v-if="messages.length === 0 && !optimistic && !pending"
+      v-if="messages.length === 0 && !optimistic && !pending && !streaming"
       class="muted chat-thread__hint"
     >
       这个会话还没有消息。在下面提问，Agent 会先看你的订单和退款情况，再决定要不要查知识库。
@@ -58,7 +70,13 @@ onMounted(scrollToBottom)
       <div class="bubble bubble--user bubble--pending">{{ optimistic }}</div>
     </div>
 
-    <div v-if="pending" class="bubble-row bubble-row--assistant">
+    <!-- 流式输出中：已经吐出来的字。等 `done` 事件回来时下面那个会变成正式消息。 -->
+    <div v-if="streaming" class="bubble-row bubble-row--assistant">
+      <div class="bubble bubble--assistant bubble--pending">{{ streaming }}</div>
+    </div>
+
+    <!-- 还没拿到第一个字。已经流式出字之后就不再显示它，否则会跟上面的草稿重复。 -->
+    <div v-if="pending && !streaming" class="bubble-row bubble-row--assistant">
       <div class="bubble bubble--assistant bubble--pending">正在回复…</div>
     </div>
   </div>

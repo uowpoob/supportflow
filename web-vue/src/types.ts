@@ -186,6 +186,13 @@ export interface Conversation {
   title: string
   created_at: string
   updated_at: string
+  /**
+   * 会话正停在图里等管理员审批。
+   *
+   * 目前后端**还没返回这个字段**（历史接口不区分等待态），所以是 `undefined`，
+   * 页面只能靠"发消息被 409 挡回来"反推。后端一旦补上，这里不用改。
+   */
+  awaiting_approval?: boolean
 }
 
 /** 对齐后端 `schemas/conversations.py::ConversationPage` */
@@ -245,3 +252,26 @@ export interface MessageTurn {
 export interface MessageCreatePayload {
   content: string
 }
+
+/** 对齐后端 `schemas/conversations.py::ConversationTitle` —— 只提交新标题 */
+export interface ConversationTitlePayload {
+  title: string
+}
+
+// ------------------------- 流式（SSE） -------------------------
+
+/**
+ * 流式连接里收到的一帧。
+ *
+ * 后端只发这两种业务事件（`api/customer/conversations.py::stream_message`）：
+ * - `delta`：模型正在吐的一段字，逐帧追加到气泡里。
+ * - `done`：本轮跑完，带的 `turn` 跟非流式接口返回的**是同一个结构**。
+ *
+ * `unknown` 是"后端发了新事件、前端还不认识"的情况 —— 丢掉就好，
+ * 不要猜它的含义。加上它是因为以后可能加 `tool` / `sources` 之类的事件，
+ * 老前端遇到新事件不该炸。
+ */
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'done'; turn: MessageTurn }
+  | { type: 'unknown'; event: string }

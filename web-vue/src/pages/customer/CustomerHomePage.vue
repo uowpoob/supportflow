@@ -6,7 +6,7 @@ import {
   createConversation,
   fetchConversationMessages,
   fetchConversations,
-  sendConversationMessage,
+  streamConversationMessage,
 } from '../../api/customer'
 import { ApiError } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -17,7 +17,7 @@ import ErrorAlert from '../../components/common/ErrorAlert.vue'
 import LoadingLine from '../../components/common/LoadingLine.vue'
 import { useApi } from '../../composables/useApi'
 import PlaceholderBlock from '../../layouts/PlaceholderBlock.vue'
-import type { ChatMessage, RetrievalStatus, RetrievedSource } from '../../types'
+import type { ChatMessage, MessageTurn, RetrievalStatus, RetrievedSource } from '../../types'
 
 /**
  * 客户首页：快捷入口 + 左侧会话列表 + 右侧对话区。
@@ -25,7 +25,10 @@ import type { ChatMessage, RetrievalStatus, RetrievedSource } from '../../types'
  * 数据分三块，各自独立：
  * - 会话列表：`GET /customer/conversations`
  * - 历史消息：`GET /customer/conversations/{id}/messages`（选中哪个拉哪个）
- * - 发消息：  `POST /customer/conversations/{id}/messages`（非流式，等整轮跑完）
+ * - 发消息：  `POST /customer/conversations/{id}/messages/stream`（流式，吐一个字显示一个字）
+ *
+ * 发消息只走流式这一条路。非流式接口（不带 `/stream`）后端还留着，
+ * 但前端不用它 —— 两个接口返回的结构完全一样，留两条路只是多一份要维护的分支。
  */
 const { user } = useAuth()
 
@@ -42,6 +45,14 @@ const draft = ref('')
 const sending = ref(false)
 /** 刚发出去、还没等到服务端确认的那句话，先显示出来。 */
 const optimistic = ref('')
+/**
+ * 流式进行中的助手文字，逐字增长。
+ *
+ * 它**不进 `messages`**：`messages` 里的是"服务端已经存好的消息"，
+ * 而这段字只是屏幕上的草稿。等服务端把 `done` 发回来，草稿整段丢掉、
+ * 换成正式消息 —— 这样就不会出现"模型说的话"和"库里的话"两套内容对不上。
+ */
+const streamingText = ref('')
 const sendError = ref('')
 
 /** 本轮的检索状态与依据 —— 属于"这一轮"，不混进消息列表。 */
@@ -56,7 +67,7 @@ const creating = ref(false)
  * 三条约定（都跟后端契约绑定，别自己加戏）：
  * - 暂停期间**发消息一定被后端 409 挡回来**，所以输入框必须锁上，别让用户白点。
  * - 审批完成后由**服务端**往这条会话追加一条回复，前端只是把它读回来：
- *   非流式接口没有推送，只能隔几秒问一次历史接口。
+ *   接口没有推送，只能隔几秒问一次历史接口。
  * - 刷新页面会丢掉"正在等待"这个界面状态（历史接口不返回它），
  *   这时靠"发一条被 409 挡回来"重新认出来。
  */
@@ -67,6 +78,15 @@ const waitingRequestKey = ref<string | null>(null)
 let waitingBaseline = 0
 /** 轮询句柄；不用 `ref`，它只影响行为不影响界面。 */
 let poller: ReturnType<typeof setInterval> | null = null
+
+/**
+ * 正在跑的这一轮流式请求的取消开关。
+ *
+ * 用途：用户切走会话 / 关掉页面时，把还在读的那条连接掐掉，
+ * 否则它的字会继续往**已经切走的那个会话**上贴。
+ * 后端也会因为连接断开而停止本轮，不会留下一条写到一半的记录。
+ */
+let inFlight: AbortController | null = null
 
 // ------------------------- 会话列表 -------------------------
 
@@ -100,10 +120,13 @@ watch(messagePage, (page) => {
   messages.value = page === null ? [] : [...page.items]
 })
 
-// 切换会话先清空：否则新会话还没加载出来的那段时间，屏幕上挂的还是上一个会话的对话。
+// 切换会话先把上一轮的遗留清干净：否则新会话还没加载出来的那段时间，
+// 屏幕上挂的还是上一个会话的对话或半截流式文字。
 watch(selectedId, () => {
+  cancelStream()
   messages.value = []
   optimistic.value = ''
+  streamingText.value = ''
   turnStatus.value = null
   turnSources.value = []
   sendError.value = ''
@@ -111,8 +134,21 @@ watch(selectedId, () => {
   stopWaiting()
 })
 
-// 离开这个页面时把定时器收干净，否则它会在后台一直打接口。
-onUnmounted(stopWaiting)
+/** 掐掉正在读的那条流；没有在跑就什么也不做。 */
+function cancelStream(): void {
+  if (inFlight !== null) {
+    inFlight.abort()
+    inFlight = null
+    sending.value = false
+  }
+}
+
+// 离开这个页面时把定时器和流都收干净，否则定时器会在后台一直打接口、
+// 流会在后台一直往内存里追加（人已经看不见了）。
+onUnmounted(() => {
+  stopWaiting()
+  cancelStream()
+})
 
 // ------------------------- 发送 -------------------------
 
@@ -168,6 +204,36 @@ function stopWaiting(): void {
   }
 }
 
+/** 把一条错误翻成界面上那句话，并顺手处理 409。 */
+function failSend(err: unknown, content: string): void {
+  // 不自动重发：上一轮可能已经把退款申请写进库了，自动重试会多出一条申请。
+  // 把输入还回去，让用户看过错误之后再决定。
+  draft.value = content
+  if (err instanceof ApiError && err.status === 409 && err.message.includes('审批')) {
+    // 刷新页面后界面上没有"正在等待"这个状态（历史接口不返回它），
+    // 但后端一挡就是 409 —— 拿这个当信号把状态补回来，不然用户会一直点、一直失败。
+    sendError.value = ''
+    startWaiting(null)
+    return
+  }
+  sendError.value = err instanceof ApiError ? err.message : '消息发送失败'
+}
+
+/** 一轮跑完了，把服务端的结果铺到界面上（流式、非流式走的是同一套）。 */
+function applyTurn(target: string, turn: MessageTurn): void {
+  // 结果属于发起时那个会话；拿回来再核一次，别贴到别的会话上。
+  if (selectedId.value !== target) return
+  // ⚠️ 服务端返回的 `messages` **包含刚发的那条用户消息**（`done` 已定稿）：
+  // 整段追加即可，不要再把 `content` 单独插一遍，否则你那句话会显示两遍。
+  appendMessages(turn.messages)
+  // 这一轮是不是把图停在"等管理员审批"了，由后端说了算（`status` 字段）。
+  if (turn.status === 'waiting_approval') {
+    startWaiting(turn.pending_request_key)
+  } else {
+    stopWaiting()
+  }
+}
+
 // 轮询把历史读回来之后，只要消息变多了，就说明管理员已经决策、服务端把结果追加进来了。
 watch(
   () => messages.value.length,
@@ -185,42 +251,63 @@ async function send(): Promise<void> {
   sendError.value = ''
   turnStatus.value = null
   turnSources.value = []
+  streamingText.value = ''
   optimistic.value = content
   draft.value = ''
 
   try {
-    const turn = await sendConversationMessage(target, content)
-    // 结果属于发起时那个会话；拿回来再核一次，别贴到别的会话上。
-    if (selectedId.value === target) {
-      // ⚠️ 服务端返回的 `messages` **包含刚发的那条用户消息**（`done` 已定稿）：
-      // 整段追加即可，不要再把 `content` 单独插一遍，否则你那句话会显示两遍。
-      appendMessages(turn.messages)
-      turnStatus.value = turn.retrieval_status
-      turnSources.value = turn.retrieved_sources
-      // 这一轮是不是把图停在"等管理员审批"了，由后端说了算（`status` 字段）。
-      if (turn.status === 'waiting_approval') {
-        startWaiting(turn.pending_request_key)
-      } else {
-        stopWaiting()
-      }
-    }
-    // 后端已经更新了会话的最近活动时间，列表顺序要跟着动。
-    reloadList()
+    await runStream(target, content)
   } catch (err) {
-    // 不自动重发：上一轮可能已经把退款申请写进库了，自动重试会多出一条申请。
-    // 把输入还回去，让用户看过错误之后再决定。
-    draft.value = content
-    sendError.value = err instanceof ApiError ? err.message : '消息发送失败'
-    // 刷新页面后界面上没有"正在等待"这个状态（历史接口不返回它），
-    // 但后端一挡就是 409 —— 拿这个当信号把状态补回来，不然用户会一直点、一直失败。
-    if (err instanceof ApiError && err.status === 409 && err.message.includes('审批')) {
-      sendError.value = ''
-      startWaiting(null)
+    // AbortError 是我们自己掐的（切会话 / 关页面），不算失败，别弹错误。
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      failSend(err, content)
     }
   } finally {
     optimistic.value = ''
+    streamingText.value = ''
+    inFlight = null
     sending.value = false
+    // 后端已经更新了会话的最近活动时间，列表顺序要跟着动。
+    reloadList()
   }
+}
+
+/**
+ * 走流式接口，边收边显示。
+ *
+ * 三个阶段，界面表现完全不同：
+ * 1. **发出去了、还没回音** —— `optimistic` 显示你刚说的那句，旁边占位"正在回复…"。
+ *    ⚠️ 这段可能不短：模型要先看订单、可能还要检索，才有第一个字。
+ * 2. **开始吐字** —— `streamingText` 逐个追加。此时**什么数据都还没落库**，
+ *    所以它只是个草稿，不能塞进 `messages`。
+ * 3. **`done` 事件到** —— 把草稿丢掉、换成服务端返回的正式消息（含你自己那条）。
+ *
+ * 另有一个坑：流式响应的 **HTTP 状态码早就 200 发出去了**，中途出错后端只能直接
+ * 断流。所以"循环结束了却没等到 `done`"就是失败 —— 必须当错误报出来，
+ * 否则用户看到一段残缺的话，还以为这就是答案。
+ */
+async function runStream(target: string, content: string): Promise<void> {
+  inFlight = new AbortController()
+  const signal = inFlight.signal
+
+  let turn: MessageTurn | null = null
+  for await (const event of streamConversationMessage(target, content, signal)) {
+    if (event.type === 'delta') {
+      streamingText.value += event.text
+    } else if (event.type === 'done') {
+      turn = event.turn
+    }
+  }
+
+  if (turn === null) {
+    throw new ApiError(0, '本轮回复中断，请查看历史消息确认结果后再重新发送')
+  }
+
+  // 先把正式消息铺上，再清草稿 —— 顺序反过来的话会闪一下空窗。
+  applyTurn(target, turn)
+  streamingText.value = ''
+  turnStatus.value = turn.retrieval_status
+  turnSources.value = turn.retrieved_sources
 }
 
 // ------------------------- 新建与切换 -------------------------
@@ -316,7 +403,13 @@ function selectConversation(id: string): void {
             </button>
           </div>
 
-          <ChatThread v-else :messages="messages" :pending="sending" :optimistic="optimistic" />
+          <ChatThread
+            v-else
+            :messages="messages"
+            :pending="sending"
+            :optimistic="optimistic"
+            :streaming="streamingText"
+          />
 
           <RetrievedSources v-if="turnStatus" :status="turnStatus" :sources="turnSources" />
 
@@ -359,7 +452,6 @@ function selectConversation(id: string): void {
 
     <PlaceholderBlock title="还没做的部分">
       <ul class="plain-list">
-        <li>流式输出：现在是<strong>非流式</strong>，要等整轮（模型 + 工具 + 检索）跑完才一次性出结果。</li>
         <li>断线恢复：发送过程中刷新页面，这一轮就看不到了，重进会话才会从历史里读回来。</li>
         <li>等待审批的状态：刷新页面后界面认不出来（历史接口还没返回这个字段），要等下次发送被 409 挡回来才知道。</li>
       </ul>

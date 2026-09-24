@@ -27,6 +27,16 @@ export class ApiError extends Error {
   }
 }
 
+/** 开发期代理地址；流式请求要自己拼完整 URL 时用（SSE 响应不能走 `request`）。 */
+export const API_BASE_URL = BASE_URL
+
+/** 非 JSON 响应（HTML 错误页、纯文本）压成一句人话 —— 别把整页 HTML 甩到界面上。 */
+function textToMessage(status: number, text: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  if (compact === '') return `请求失败（HTTP ${status}）`
+  return compact.length > 200 ? `${compact.slice(0, 200)}…` : compact
+}
+
 /** 后端可能返回 {code, message, data} 信封，也可能直接返回业务对象。
  *  两种都能解析，等信封方案最终定了再删掉多余分支。 */
 function unwrap<T>(body: unknown): T {
@@ -133,4 +143,51 @@ export const http = {
       method: 'POST',
       body: payload === undefined ? undefined : JSON.stringify(payload),
     }),
+}
+
+/**
+ * 发一次请求并把响应体当**流**交出来（流式接口专用）。
+ *
+ * 跟 `request` 的区别：`request` 会 `await response.text()` 把整段读完再解析，
+ * 流式接口那样做就等于退化成非流式（要等到最后一刻），所以这里只做
+ * "发出去 → 检查状态码 → 把 response 还给你"，由调用方边读边解析。
+ *
+ * ⚠️ 状态码检查和错误解析必须在这里做完：真实错误在**第一段数据到达之前**就返回了，
+ * 交给调用方去读 `response.ok` 的话，一个 409 会被当成"空流"而不是"正在等待审批"。
+ */
+export async function openPostStream(path: string, payload: unknown): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    })
+  } catch {
+    throw new ApiError(0, '连不上后端，请确认 FastAPI 已启动（默认 127.0.0.1:8000）')
+  }
+
+  if (!response.ok) {
+    const text = await response.text()
+    let body: unknown = text
+    if (text) {
+      try {
+        body = JSON.parse(text)
+      } catch {
+        // 不是 JSON（例如 nginx 的错误页），下面按纯文本处理。
+      }
+    }
+    // 复用 `parseError`：它已经处理了 `detail` 是字符串/数组两种情况。
+    // 只有"后端连 JSON 都没给"时才退回到纯文本，避免把 HTML 甩到界面上。
+    if (body !== null && typeof body === 'object') {
+      throw parseError(response.status, body)
+    }
+    throw new ApiError(response.status, textToMessage(response.status, text))
+  }
+
+  return response
 }
