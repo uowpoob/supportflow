@@ -13,6 +13,13 @@ defineProps<{
   selectedId: string | null
   /** 本轮对话正在跑的时候不许切走 —— 结果要贴回发起时那个会话 */
   disabled?: boolean
+  /**
+   * 正在等管理员审批的会话 id。
+   *
+   * 只有**服务端确认过**的会话才会进这个集合（发送时带的 `status`，或进来后读历史得到的）。
+   * 不猜：会话列表接口没有这个信息，没进过会话的就不知道。
+   */
+  waitingIds?: string[]
 }>()
 
 const emit = defineEmits<{ select: [id: string] }>()
@@ -48,6 +55,8 @@ function timeLabel(value: string): string {
         @click="emit('select', item.id)"
       >
         <span class="side-list__title">{{ item.title }}</span>
+        <!-- 等待审批 = 这一轮卡住了，必须让它在列表里就能被看见，不用点进去才知道。 -->
+        <span v-if="waitingIds?.includes(item.id)" class="side-list__badge">等审批</span>
         <span class="side-list__time">{{ timeLabel(item.updated_at) }}</span>
       </button>
     </li>

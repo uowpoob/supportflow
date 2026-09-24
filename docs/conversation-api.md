@@ -5,7 +5,7 @@
 同一会话始终满足 `conversation_id == thread_id`，使用带连字符的 UUID 字符串，
 不会为每条消息新建 thread_id。现有模型已支持，无需数据库迁移。
 
-四个接口位于 `/customer/conversations`，均要求客户登录 Cookie。
+会话接口位于 `/customer/conversations`，均要求客户登录 Cookie。
 前端通过现有代理访问时加 `/api` 前缀。
 
 ## 创建会话
@@ -53,6 +53,8 @@ HTTP 状态码 201 表示会话已创建。创建空会话不会调用模型或�
 校验通过后才读取该 UUID 对应的 checkpoint。不是本人的会话与不存在的会话统一返回 404。
 
 `data` 包含 `conversation_id`、`items`、`total`、`offset`、`limit`。
+还包含当前图状态 `status`（`completed` / `waiting_approval`）与等待审批时的
+`pending_request_key`。重新进入会话时可据此恢复输入框状态。
 消息按对话顺序排列，分页针对过滤后的可展示消息；新会话没有 checkpoint 时返回空列表。
 每条消息结构为：
 
@@ -90,6 +92,13 @@ MySQL Session 由本次请求持有。图通过同一个 UUID 恢复历史。
 
 ## 错误与当前边界
 
+`POST /customer/conversations/{conversation_id}/messages/stream` 使用 POST SSE，
+正常响应依次发送 `delta`（增量文字）和 `done`（完整本轮结果）。流开始后的
+业务或模型异常发送 `error`，数据为 `{ "status": 502, "message": "…" }`；
+此时 HTTP 头已发出，状态仍为 200。断网导致没有收到 `done` 或 `error` 时，
+本轮结果未确认；服务端不会自动重放该消息。历史接口、现有的“我的退款申请”
+列表和订单查询可供调用方重新核对持久化状态。
+
 | HTTP 状态码 | 含义 |
 | --- | --- |
 | 401 | 未登录或会话失效 |
@@ -110,9 +119,9 @@ LangGraph `thread_id`，从数据库重读审批结果并追加客户可见消�
 管理员可调用 `POST /admin/refund-requests/{request_key}/resume` 重试；重复调用不会重复退款。
 生产环境需配置 PostgreSQL checkpointer，内存回退无法跨进程重启恢复。
 
-当前只有单进程的同会话并发保护，尚无跨进程运行锁、请求幂等键、SSE 或断流恢复协议；
-这一阶段按单个后端进程使用。重复发送是新的用户消息，不保证复用上次执行。
-前端聊天交互尚未接入，现有列表会开始显示真实会话。
+当前只有单进程的同会话并发保护，尚无跨进程运行锁或请求幂等键。
+重复发送是新的用户消息，不保证复用上次执行。SSE 断流后只能重读持久化状态，
+无法重放丢失的增量文字。
 
 配置 `LANGGRAPH_PG_DSN` 时消息持久化到 PostgreSQL；未配置时沿用内存回退，服务重启会丢失消息，
 MySQL 中的会话列表仍在。原手动脚本固定 `test-1` 的 checkpoint 不会自动迁移进新的 UUID 会话。

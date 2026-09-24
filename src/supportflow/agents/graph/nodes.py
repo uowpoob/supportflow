@@ -15,6 +15,7 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
+from supportflow.core.config import settings
 from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
 from supportflow.retrieval.types import RetrievalUnavailable
 from supportflow.models.enums import RefundStatus
@@ -89,7 +90,9 @@ async def retrieve_knowledge(
     if product_model and product_model.casefold() not in question.casefold():
         question = f"商品型号：{product_model}\n问题：{question}"
     try:
-        documents = await retrieve(question)
+        # 重排开关默认开（见 config.RETRIEVAL_RERANK）；重排自己失败时会退回融合顺序，
+        # 不会因为这一个环节挂掉就让本轮拿不到证据。
+        documents = await retrieve(question, rerank=settings.RETRIEVAL_RERANK)
     except RetrievalUnavailable as exc:
         logger.warning("%s", exc)
         update["retrieval_status"] = "unavailable"

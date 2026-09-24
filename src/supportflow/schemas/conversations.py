@@ -57,6 +57,8 @@ class ConversationMessagesOut(BaseModel):
     total: int
     offset: int
     limit: int
+    status: Literal["completed", "waiting_approval"]
+    pending_request_key: str | None = None
 
 
 class RetrievedSourceOut(BaseModel):

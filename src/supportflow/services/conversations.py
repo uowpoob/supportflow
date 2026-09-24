@@ -106,9 +106,12 @@ class ConversationChat:
             logger.warning("读取会话历史失败（%s）", type(exc).__name__)
             raise ConversationError("会话历史暂不可用", status_code=503) from exc
         messages = _public_messages(snapshot.values.get("messages", []))
+        pending_request_key = snapshot.values.get("pending_approval")
         return ConversationMessagesOut(
             conversation_id=conversation_id, items=messages[offset:offset + limit],
             total=len(messages), offset=offset, limit=limit,
+            status="waiting_approval" if pending_request_key else "completed",
+            pending_request_key=pending_request_key,
         )
 
     async def send_message(
@@ -175,22 +178,27 @@ class ConversationChat:
 
             message = HumanMessage(id=str(uuid4()), content=content)
             try:
-                async for part in self.graph.astream(
+                graph_stream = self.graph.astream(
                     {"messages": [message]},
                     config,
                     context=SupportContext(user_id, conversation_id, db),
                     stream_mode="messages",
                     subgraphs=True,
                     version="v2",
-                ):
-                    if part["type"] != "messages":
-                        continue
-                    chunk, metadata = part["data"]
-                    # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
-                    if metadata.get("langgraph_node") != "model":
-                        continue
-                    if isinstance(chunk, AIMessageChunk) and chunk.text:
-                        yield str(chunk.text)
+                )
+                try:
+                    async for part in graph_stream:
+                        if part["type"] != "messages":
+                            continue
+                        chunk, metadata = part["data"]
+                        # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
+                        if metadata.get("langgraph_node") != "model":
+                            continue
+                        if isinstance(chunk, AIMessageChunk) and chunk.text:
+                            yield str(chunk.text)
+                finally:
+                    # 客户端断开时立刻关闭图流，不再继续读取后续模型/工具事件。
+                    await graph_stream.aclose()
                 snapshot = await self.graph.aget_state(config)
                 yield _turn_from_state(snapshot.values, conversation_id, message.id)
             except Exception as exc:

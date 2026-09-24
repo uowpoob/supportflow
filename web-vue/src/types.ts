@@ -186,13 +186,6 @@ export interface Conversation {
   title: string
   created_at: string
   updated_at: string
-  /**
-   * 会话正停在图里等管理员审批。
-   *
-   * 目前后端**还没返回这个字段**（历史接口不区分等待态），所以是 `undefined`，
-   * 页面只能靠"发消息被 409 挡回来"反推。后端一旦补上，这里不用改。
-   */
-  awaiting_approval?: boolean
 }
 
 /** 对齐后端 `schemas/conversations.py::ConversationPage` */
@@ -203,13 +196,31 @@ export interface ConversationPage {
   limit: number
 }
 
-/** 对齐后端 `schemas/conversations.py::ConversationMessagesOut` */
+/**
+ * 对齐后端 `schemas/conversations.py::ConversationMessagesOut` —— 一页历史消息。
+ *
+ * `status` / `pending_request_key` 不是"顺便带的"：**刷新页面之后页面只剩这个接口可用**，
+ * 必须靠它把"这个会话正停在等审批"认回来。少了它，用户会一直点发送、一直被 409 挡回来。
+ *
+ * ⚠️ `status` 只有两个值，**不包含"正在跑"**。后端确实知道（进程里有个 `_running` 集合，
+ * 同一个会话在跑就返回 409），但历史接口没有把它暴露出来。所以：
+ * - "等审批"能在进会话时认出来（服务端明确告诉我们了）；
+ * - "正在回复但这一轮的连接已经断了"**认不出来**，只能等一次发送被 409 挡回来才发现。
+ *
+ * 这是刻意的降级，不是漏写：猜不出来不如不猜。要彻底解决得让后端补一个字段
+ * （`ConversationMessagesOut` 加 `running: bool`），前端这里加一行即可。
+ * 详见文件末尾 `ConversationRunningStatus` 那段说明。
+ */
 export interface ConversationMessages {
   conversation_id: string
   items: ChatMessage[]
   total: number
   offset: number
   limit: number
+  /** 这个会话当前的图状态；新会话没有 checkpoint 时同样是 `completed` */
+  status: MessageTurnStatus
+  /** `waiting_approval` 时是那张暂停的申请编号；否则为 null */
+  pending_request_key: string | null
 }
 
 /** 对齐后端 `schemas/conversations.py::RetrievedSourceOut` —— 本轮召回的候选片段 */
@@ -230,6 +241,31 @@ export interface RetrievedSource {
  *   这期间再发消息后端会返回 409，界面必须自己把输入框锁上。
  */
 export type MessageTurnStatus = 'completed' | 'waiting_approval'
+
+/**
+ * 后端**还没提供**的字段（记在这里，等接口补上时前端照着接）。
+ *
+ * 场景：发送过程中刷新了页面 / 切走了会话。前端把连接掐了，但**服务端那一轮并没有停**，
+ * 它会继续跑完，成功时把结果追加进 checkpoint，失败时什么也不写。
+ *
+ * 这期间服务端对同一会话的新消息一律回 409，但**历史接口读不出"正在跑"** ——
+ * 它只从 checkpoint 里读 `pending_approval`，而"正在跑"是进程内存里的事
+ * （`services/conversations.py::ConversationChat._running`）。
+ *
+ * 于是刷新之后页面会误以为这个会话是空闲的：输入框能打、能点发送，点下去才被 409 挡回来。
+ * 界面表现是"点了发送没反应、过了一会儿冒出一句错误"，而不是"这个会话正在忙"。
+ *
+ * 要解决的话，后端在 `ConversationMessagesOut` 里加：
+ *
+ *     running: bool     # 本进程里这个会话是否正有一轮在跑
+ *
+ * 前端只需要在 `ConversationMessages` 里加对应字段、并在 `applyServerStatus` 里多认一个分支。
+ * ⚠️ 注意这个字段**只对单进程成立**：多进程部署时 A 进程不知道 B 进程在跑，
+ * 那时得换成"图状态里记一个 `running` 标记"才有意义。
+ */
+export interface ConversationRunningStatus {
+  running: boolean
+}
 
 /**
  * 对齐后端 `schemas/conversations.py::MessageTurnOut` —— 一轮对话的增量返回。

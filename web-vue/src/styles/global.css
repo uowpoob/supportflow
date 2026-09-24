@@ -719,6 +719,24 @@ code {
   white-space: nowrap;
 }
 
+/* 「等审批」角标：这一轮卡在管理员那边了，在列表上就得能看见，不用点进去才知道。
+   跟标题同一行，所以标题要能压缩（`flex: 1` + `min-width: 0` 才截得动）。 */
+.side-list__badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.side-list__title:has(+ .side-list__badge) {
+  flex: 1;
+  min-width: 0;
+}
+
 .side-list__time {
   color: var(--text-muted);
   font-size: 11.5px;

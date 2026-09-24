@@ -1,5 +1,6 @@
 """客户会话与消息接口；conversation_id 与 thread_id 使用同一个 UUID。"""
 
+import logging
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from supportflow.services import conversations as conversation_service
 from supportflow.services.conversations import ConversationChat, ConversationError
 
 router = APIRouter(tags=["customer"])
+logger = logging.getLogger(__name__)
 
 
 def _chat(request: Request) -> ConversationChat:
@@ -102,5 +104,14 @@ async def stream_message(
                 yield ServerSentEvent(event="done", data=item)
             else:
                 yield ServerSentEvent(event="delta", data={"text": item})
+    except ConversationError as exc:
+        # SSE 响应头可能已经发出，不能再用 HTTP 状态码表示本轮失败。
+        yield ServerSentEvent(event="error", data={"status": exc.status_code, "message": exc.message})
+    except Exception:
+        logger.exception("流式响应失败")
+        yield ServerSentEvent(event="error", data={
+            "status": 502,
+            "message": "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
+        })
     finally:
         await stream.aclose()

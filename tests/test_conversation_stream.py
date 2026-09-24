@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from langchain_deepseek import ChatDeepSeek
+from langchain_core.messages import AIMessageChunk
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from supportflow.api.auth.deps import require_customer
 from supportflow.api.customer.conversations import router
 from supportflow.db.session import get_db
 from supportflow.services import conversations
+from supportflow.services.conversations import ConversationError
 
 
 class ModelStream(httpx.AsyncByteStream):
@@ -119,8 +121,14 @@ async def test_nested_agent_reaches_sse_before_completion_and_saves_only_chat(mo
     assert start["status"] == 200
     assert dict(start["headers"])[b"content-type"].startswith(b"text/event-stream")
     wire = b"".join(item.get("body", b"") for item in sent).decode()
-    texts = [json.loads(line[6:])["text"] for line in wire.splitlines() if line.startswith("data: ")]
+    frames = [frame for frame in wire.replace("\r\n", "\n").split("\n\n") if frame]
+    texts = [
+        json.loads(line[6:])["text"]
+        for frame in frames if "event: delta" in frame
+        for line in frame.splitlines() if line.startswith("data: ")
+    ]
     assert texts == ["你", "好", "！"]
+    assert any("event: done" in frame for frame in frames)
     assert model_calls == ["router", "agent"]
 
     snapshot = await graph.aget_state({"configurable": {"thread_id": conversation_id}})
@@ -130,4 +138,81 @@ async def test_nested_agent_reaches_sse_before_completion_and_saves_only_chat(mo
     ]
     assert snapshot.values["current_intent"] == "unknown"
     assert len(snapshot.values["messages"]) == 2
+    assert not chat._running
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_after_delta_emits_error_event():
+    class FailingChat:
+        async def stream_turn(self, *_args):
+            yield "部分回复"
+            raise ConversationError("请先核对历史和退款状态", status_code=502)
+
+    app = FastAPI()
+    app.include_router(router, prefix="/customer")
+    app.state.conversation_chat = FailingChat()
+    app.dependency_overrides[require_customer] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[get_db] = lambda: Mock(spec=AsyncSession)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        response = await client.post(
+            f"/customer/conversations/{uuid4()}/messages/stream",
+            json={"content": "申请退款"},
+        )
+
+    assert response.status_code == 200
+    frames = [frame for frame in response.text.replace("\r\n", "\n").split("\n\n") if frame]
+    assert "event: delta" in frames[0]
+    assert "event: error" in frames[1]
+    payload = json.loads(next(line[6:] for line in frames[1].splitlines() if line.startswith("data: ")))
+    assert payload == {"status": 502, "message": "请先核对历史和退款状态"}
+    assert not any("event: done" in frame for frame in frames)
+
+
+@pytest.mark.asyncio
+async def test_history_exposes_waiting_state_for_recovery(monkeypatch):
+    monkeypatch.setattr(
+        conversations.conversation_repo, "get_conversation_for_user",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    graph = SimpleNamespace(aget_state=AsyncMock(return_value=SimpleNamespace(
+        values={"messages": [], "pending_approval": "rq-1"},
+    )))
+    chat = conversations.ConversationChat(graph)
+    page = await chat.list_messages(Mock(spec=AsyncSession), 1, str(uuid4()), 0, 100)
+
+    assert page.status == "waiting_approval"
+    assert page.pending_request_key == "rq-1"
+
+
+@pytest.mark.asyncio
+async def test_closing_customer_stream_closes_graph_stream(monkeypatch):
+    monkeypatch.setattr(
+        conversations.conversation_repo, "get_conversation_for_user",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(conversations.conversation_repo, "touch_conversation", AsyncMock())
+    closed = asyncio.Event()
+
+    class Graph:
+        async def aget_state(self, *_args):
+            return SimpleNamespace(values={})
+
+        async def astream(self, *_args, **_kwargs):
+            try:
+                yield {"type": "messages", "data": (
+                    AIMessageChunk(content="片段"), {"langgraph_node": "model"},
+                )}
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+    chat = conversations.ConversationChat(Graph())
+    stream = chat.stream_turn(Mock(spec=AsyncSession), 1, str(uuid4()), "你好")
+    assert await anext(stream) == "片段"
+    await stream.aclose()
+
+    assert closed.is_set()
     assert not chat._running

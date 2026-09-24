@@ -29,6 +29,21 @@ def recalls(monkeypatch):
     return vector, bm25
 
 
+@pytest.fixture(autouse=True)
+def reranker(monkeypatch):
+    """重排会调百炼的外部接口，这里统一换成「原样返回前 top_n 条」。
+
+    autouse：图节点默认开着重排，任何一条走到真实 retrieve_hybrid 的用例
+    都会打网络，必须把外部调用挡在测试之外。
+    """
+    async def passthrough(query, chunks, *, top_n):
+        return chunks[:top_n]
+
+    mock = AsyncMock(side_effect=passthrough)
+    monkeypatch.setattr(hybrid, "rerank_chunks", mock)
+    return mock
+
+
 @pytest.mark.asyncio
 async def test_recall_window_filters_and_fusion(recalls):
     result = await hybrid.retrieve_hybrid(
@@ -136,7 +151,7 @@ async def test_unexpected_errors_and_cancellation_are_not_swallowed(recalls, err
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["fused", "degraded", "empty", "unavailable"])
-async def test_graph_node_uses_real_hybrid_entrypoint(recalls, outcome):
+async def test_graph_node_uses_real_hybrid_entrypoint(recalls, reranker, outcome):
     if outcome in ("empty", "unavailable"):
         for recall in recalls:
             recall.return_value = []
@@ -153,6 +168,9 @@ async def test_graph_node_uses_real_hybrid_entrypoint(recalls, outcome):
     if outcome == "fused":
         assert result["retrieved_documents"][0]["chunk_id"] == "shared"
         assert result["retrieved_documents"][0]["score"] == pytest.approx(2 / 62)
+        # 节点默认开着重排：融合出的候选要真的送进重排，再拿重排的结果当本轮证据。
+        reranker.assert_awaited_once()
+        assert reranker.await_args.args[0] == "商品型号：X1\n问题：如何连接？"
     if outcome in ("empty", "unavailable"):
         assert result["retrieved_documents"] == []
     assert state["retrieved_documents"] == [chunk("old")]

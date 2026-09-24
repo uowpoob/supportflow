@@ -34,6 +34,14 @@ class Settings(DatabaseSettings):
     DASHSCOPE_NATIVE_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
     RERANK_MODEL: str = "gte-rerank-v2"
 
+    # 检索是否在 RRF 融合之后再过一遍重排。
+    # 默认开：融合只看名次，重排能按语义把真正切题的条款提到前面。
+    # 设成 false 可以关掉 —— 重排要额外调一次百炼接口，是检索链路上唯一的外部依赖，
+    # 出问题（或想省调用量、做对照评测）时不必改代码。
+    # ⚠️ 关掉不代表没有重排兜底：rerank_chunks 自己失败时也会退回融合顺序，
+    # 那个开关管的是"要不要试"，这个开关管的是"要不要走"。
+    RETRIEVAL_RERANK: bool = True
+
     LANGSMITH_TRACING: bool
     LANGSMITH_ENDPOINT: str
     LANGSMITH_API_KEY: str

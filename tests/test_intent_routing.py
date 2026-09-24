@@ -158,7 +158,10 @@ async def test_retrieval_node_updates_only_current_evidence(monkeypatch, outcome
     assert result["next_node"] == "support_agent"
     assert state == before
     assert "messages" not in result
-    retrieval.assert_awaited_once_with("商品型号：X1\n问题：如何开机？")
+    # 节点按配置开关决定要不要重排，断言跟着开关走，避免 .env 关掉重排时误报。
+    retrieval.assert_awaited_once_with(
+        "商品型号：X1\n问题：如何开机？", rerank=nodes.settings.RETRIEVAL_RERANK,
+    )
 
 
 class ScriptedModel(BaseChatModel):
