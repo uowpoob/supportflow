@@ -1,8 +1,10 @@
-"""客户会话与非流式消息接口；conversation_id 与 thread_id 使用同一个 UUID。"""
+"""客户会话与消息接口；conversation_id 与 thread_id 使用同一个 UUID。"""
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.api.auth.deps import require_customer
@@ -82,3 +84,23 @@ async def send_message(
     except ConversationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return Success[MessageTurnOut](data=turn)
+
+
+@router.post("/conversations/{conversation_id}/messages/stream", response_class=EventSourceResponse)
+async def stream_message(
+    conversation_id: UUID,
+    payload: MessageCreate,
+    chat: ConversationChat = Depends(_chat),
+    user: User = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> AsyncIterator[ServerSentEvent]:
+    """逐段发送助手文字，并在图结束后发送本轮完整结果。"""
+    stream = chat.stream_turn(db, user.id, str(conversation_id), payload.content)
+    try:
+        async for item in stream:
+            if isinstance(item, MessageTurnOut):
+                yield ServerSentEvent(event="done", data=item)
+            else:
+                yield ServerSentEvent(event="delta", data={"text": item})
+    finally:
+        await stream.aclose()

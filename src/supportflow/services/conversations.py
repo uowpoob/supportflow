@@ -1,15 +1,16 @@
 """会话归属、消息展示和单轮对话；HTTP 不直接操作 checkpoint 或拼接 SQL。"""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.agents.graph.context import SupportContext
+from supportflow.agents.graph.state import SupportState
 from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
 from supportflow.schemas.conversations import (
@@ -67,6 +68,24 @@ def _public_messages(messages: Sequence[BaseMessage]) -> list[ChatMessageOut]:
     return visible
 
 
+def _turn_from_state(state: SupportState, conversation_id: str, message_id: str) -> MessageTurnOut:
+    """从本轮用户消息开始提取结果，供普通请求和流式请求共用。"""
+    history = state["messages"]
+    start = next(i for i, item in enumerate(history) if item.id == message_id)
+    return MessageTurnOut(
+        conversation_id=conversation_id,
+        messages=_public_messages(history[start:]),
+        status="waiting_approval" if state.get("pending_approval") else "completed",
+        pending_request_key=state.get("pending_approval"),
+        retrieval_status=state.get("retrieval_status", "not_requested"),
+        retrieved_sources=[RetrievedSourceOut(
+            document_id=item["document_id"], chunk_id=item["chunk_id"],
+            title=item["title"], source=item["source"],
+            section=item.get("section"), score=item.get("score"),
+        ) for item in state.get("retrieved_documents", [])],
+    )
+
+
 class ConversationChat:
     """每个服务进程复用图；数据库会话和身份由每次请求单独提供。"""
 
@@ -115,24 +134,68 @@ class ConversationChat:
                     config,
                     context=SupportContext(user_id, conversation_id, db),
                 )
-                history = state["messages"]
-                # 用本轮用户消息 ID 定位增量，避免向前端重复返回整份历史。
-                start = next(i for i, item in enumerate(history) if item.id == message.id)
-                return MessageTurnOut(
-                    conversation_id=conversation_id,
-                    messages=_public_messages(history[start:]),
-                    status="waiting_approval" if state.get("pending_approval") else "completed",
-                    pending_request_key=state.get("pending_approval"),
-                    retrieval_status=state.get("retrieval_status", "not_requested"),
-                    retrieved_sources=[RetrievedSourceOut(
-                        document_id=item["document_id"], chunk_id=item["chunk_id"],
-                        title=item["title"], source=item["source"],
-                        section=item.get("section"), score=item.get("score"),
-                    ) for item in state.get("retrieved_documents", [])],
-                )
+                return _turn_from_state(state, conversation_id, message.id)
             except Exception as exc:
                 # 不自动重跑：此前的工具可能已经提交了业务写入。
                 logger.warning("对话执行失败（%s）", type(exc).__name__)
+                raise ConversationError(
+                    "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
+                    status_code=502,
+                ) from exc
+        finally:
+            self._running.discard(conversation_id)
+
+    async def stream_message(
+        self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
+    ) -> AsyncIterator[str]:
+        """兼容仅消费文字片段的调用方。"""
+        stream = self.stream_turn(db, user_id, conversation_id, content)
+        try:
+            async for event in stream:
+                if isinstance(event, str):
+                    yield event
+        finally:
+            await stream.aclose()
+
+    async def stream_turn(
+        self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
+    ) -> AsyncIterator[str | MessageTurnOut]:
+        """先逐段产出助手文字，图执行结束后产出本轮完整结果。"""
+        await _require_conversation(db, user_id, conversation_id)
+        if conversation_id in self._running:
+            raise ConversationError("本会话正在回复，请等待本轮完成", status_code=409)
+        self._running.add(conversation_id)
+        try:
+            config = {"configurable": {"thread_id": conversation_id}}
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.values.get("pending_approval"):
+                raise ConversationError("本会话正在等待管理员审批", status_code=409)
+            await conversation_repo.touch_conversation(db, user_id, conversation_id)
+            await db.commit()
+
+            message = HumanMessage(id=str(uuid4()), content=content)
+            try:
+                async for part in self.graph.astream(
+                    {"messages": [message]},
+                    config,
+                    context=SupportContext(user_id, conversation_id, db),
+                    stream_mode="messages",
+                    subgraphs=True,
+                    version="v2",
+                ):
+                    if part["type"] != "messages":
+                        continue
+                    chunk, metadata = part["data"]
+                    # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
+                    if metadata.get("langgraph_node") != "model":
+                        continue
+                    if isinstance(chunk, AIMessageChunk) and chunk.text:
+                        yield str(chunk.text)
+                snapshot = await self.graph.aget_state(config)
+                yield _turn_from_state(snapshot.values, conversation_id, message.id)
+            except Exception as exc:
+                # 工具可能已经写库；失败时不自动重新执行本轮。
+                logger.warning("流式对话执行失败（%s）", type(exc).__name__)
                 raise ConversationError(
                     "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
                     status_code=502,
