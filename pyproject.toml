@@ -18,20 +18,15 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.53",
     "uvicorn>=0.52.4",
     "alembic>=1.20.0",
-    "jinja2>=3.1.6",
     "bcrypt>=5.0.0",
-    "itsdangerous>=2.2.0",
     "python-multipart>=0.0.32",
-    "passlib>=1.7.4",
     "cryptography>=50.0.1",
     "langchain-core>=1.6.3",
-    "ipython>=9.17.1",
     "langgraph-checkpoint-postgres>=3.1.2",
     "psycopg[binary]>=3.3.6",
     "pymilvus>=3.0.2",
     "rank-bm25>=0.2.2",
     "jieba>=0.42.1",
-    "python-docx>=1.2.0",
 ]
 
 [project.scripts]

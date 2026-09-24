@@ -120,9 +120,11 @@ async def test_embedding_failure_is_unavailable(client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("vector", [[1.0], [float("inf"), 1.0], [0.0, 0.0]])
-async def test_bad_query_vectors_do_not_connect(client, vector):
-    vector.embed_query.return_value = vector
+# ⚠️ 参数名不能叫 vector：本文件顶部 `from ... import vector` 拿的是模块，
+# pytest 会按参数名注入，撞名后函数里的 vector 就变成 list 了（MilvusClient 全没了）。
+@pytest.mark.parametrize("bad_embedding", [[1.0], [float("inf"), 1.0], [0.0, 0.0]])
+async def test_bad_query_vectors_do_not_connect(client, bad_embedding):
+    vector.embed_query.return_value = bad_embedding
     with pytest.raises(vector.RetrievalUnavailable):
         await vector.retrieve("q")
     vector.MilvusClient.assert_not_called()

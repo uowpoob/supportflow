@@ -154,8 +154,16 @@ export const http = {
  *
  * ⚠️ 状态码检查和错误解析必须在这里做完：真实错误在**第一段数据到达之前**就返回了，
  * 交给调用方去读 `response.ok` 的话，一个 409 会被当成"空流"而不是"正在等待审批"。
+ *
+ * ⚠️ `signal` 必须真的传进 `fetch`。曾经这里只收两个参数、把外层的取消信号丢掉了，
+ * 结果 `abort()` 是个空操作：连接不断，旧的字还会继续往外冒。
+ * 传进去之后，取消会让**还没读完的响应体**立刻报 `AbortError`，连接真正断开。
  */
-export async function openPostStream(path: string, payload: unknown): Promise<Response> {
+export async function openPostStream(
+  path: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<Response> {
   let response: Response
   try {
     response = await fetch(`${BASE_URL}${path}`, {
@@ -166,8 +174,12 @@ export async function openPostStream(path: string, payload: unknown): Promise<Re
       },
       body: JSON.stringify(payload),
       credentials: 'include',
+      signal,
     })
-  } catch {
+  } catch (err) {
+    // "主动取消"和"连不上"必须分开报。全都吞成 ApiError 的话，调用方就分不出
+    // 是用户自己切走了会话、还是网络真断了 —— 会把自己取消当成失败弹给用户看。
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
     throw new ApiError(0, '连不上后端，请确认 FastAPI 已启动（默认 127.0.0.1:8000）')
   }
 

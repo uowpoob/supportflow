@@ -128,7 +128,9 @@ export function sendConversationMessage(conversationId: string, content: string)
  *   所以"发出去 → 第一个字到"之间仍然是一段没有反馈的空白。
  * - 出错时后端不会走 HTTP 状态码（响应的 200 已经发出去了），而是直接断流；
  *   调用方要靠"stream 结束但没等到 done"来判断这一轮失败。
- * - 传 `signal` 可以中途取消（组件卸载时用），取消后后端也会跟着停。
+ * - 传 `signal` 可以中途取消（切会话、组件卸载时用）。取消会让读取循环抛
+ *   `AbortError`，连接真的断开，后端发现写不出去也会跟着停 —— 所以调用方
+ *   要按 `AbortError` 把它识别成"我们自己掐的"，别当成发送失败。
  */
 export async function* streamConversationMessage(
   conversationId: string,
@@ -139,6 +141,7 @@ export async function* streamConversationMessage(
   const response = await openPostStream(
     `/customer/conversations/${encodeParam(conversationId)}/messages/stream`,
     payload,
+    signal,
   )
   if (signal !== undefined) {
     // 已经取消过了就直接结束，别白读一遍。

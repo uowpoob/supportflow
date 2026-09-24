@@ -1,14 +1,36 @@
 # SupportFlow
 
-用于学习和面试展示的智能售后工单 Agent。当前已实现认证、角色依赖、订单查询，以及退款资格判定 / 申请 / 审批 / 模拟退款全链路；Agent 对话、政策检索与部署脚本仍待实现。最新检查与后续安排见 [开发计划](docs/plan-8-days.md)。
+用于学习和面试展示的智能售后工单 Agent。
 
-## 本地启动（Windows PowerShell）
+**已实现**：登录认证与会话、角色依赖、订单查询、退款资格判定 / 申请 / 审批 / 模拟退款全链路、
+Agent 对话（LangGraph 单图 + PostgreSQL checkpoint，支持人工审批中断与恢复、SSE 流式输出）、
+政策知识检索（向量 / BM25 / RRF 融合 / 重排四段，附四档对比评测报告）。
 
-在项目根目录执行。当前电脑的 uv 位于以下路径；无需修改全局 PATH：
+**尚未实现**：一键启动的 compose、面向服务器的部署脚本与 nginx、LangSmith 评测报告。
+分阶段记录见 [开发计划](docs/plan-8-days.md)。
+
+## 本地启动
+
+在项目根目录执行。先把 `.env.example` 复制成 `.env`，填三处密钥：
+
+- `DEEPSEEK_API_KEY` —— **必填**，不填服务起不来
+- `MYSQL_PASSWORD` —— 业务库密码，按本机 MySQL 实际情况填
+- `DASHSCOPE_API_KEY` —— 向量化与重排用，不填则政策检索不可用（其余功能正常）
+
+其余项 `.env.example` 里都已给了可直接使用的默认值；LangSmith 那几项是可选观测，默认关闭，不用管。
+
+Windows PowerShell（当前电脑的 uv 在以下路径；无需修改全局 PATH）：
 
 ```powershell
 & "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache sync --locked
 & "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080 --loop asyncio:SelectorEventLoop
+```
+
+Linux / macOS 上去掉 `--loop asyncio:SelectorEventLoop` —— 那是 Windows 独有的坑（见下）：
+
+```bash
+uv sync --locked
+uv run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080
 ```
 
 端口用 **8080**：`python -m supportflow` 内置的 8000 在本机绑不上（WinError 10013，
@@ -44,6 +66,40 @@
 和 `await session.commit()` 执行查询、显式提交事务。并发任务各用独立会话，
 不在等待模型回复或人工审批期间保持数据库事务。
 
+## PostgreSQL 与 Milvus
+
+这两个都是**可选**的：不启动照样能起服务，只是对应能力降级。
+
+| 服务 | 存什么 | 不启动会怎样 |
+| --- | --- | --- |
+| PostgreSQL | LangGraph 对话记忆（checkpoint） | 退化成进程内存记忆，重启服务后历史消失 |
+| Milvus | 政策语料索引（428 条向量） | 政策检索不可用，Agent 只能答订单 / 退款 |
+
+PostgreSQL 起一个官方镜像容器即可（本项目开发时用的是 `postgres:16`）：
+
+```powershell
+docker run -d --name langgraph-postgres -p 5432:5432 `
+  -e POSTGRES_DB=langgraph_db `
+  -e POSTGRES_USER=langgraph_user `
+  -e POSTGRES_PASSWORD=<自己定一个密码> `
+  -v supportflow-pgdata:/var/lib/postgresql/data `
+  postgres:16
+```
+
+⚠️ 一定要带 `-v ...:/var/lib/postgresql/data`：不加则数据落在匿名卷上，容器一删对话历史就没了。
+
+然后在 `.env` 里把连接串指过去（**这一项原先没写进 `.env.example`，不配会静默退化成内存记忆**）：
+
+```
+LANGGRAPH_PG_DSN=postgresql://langgraph_user:<上面的密码>@127.0.0.1:5432/langgraph_db
+```
+
+Milvus 官方需要连带 MinIO 和 etcd 一共三个容器，装法见
+[Milvus 官方文档](https://milvus.io/docs/install_standalone-docker.md)。
+`.env` 里配 `MILVUS_URI`（默认 `http://127.0.0.1:19530`）、`DB_NAME`、`COLLECTION`。
+灌语料用 `python -m supportflow.retrieval.resource2chunks`
+（读 `src/supportflow/retrieval/` 下的 md → 按条款切分 → 向量化 → 写入 Milvus，自带行数校验）。
+
 ## 前端
 
 `web-vue/`（Vue 3）是当前使用的版本；`web/`（React 初版）已于 2026-09-18 从 git 索引移除 ——
@@ -52,13 +108,14 @@
 `cd web-vue`、`npm ci`（首次安装）、`npm run dev`。
 
 页面与组件已按域分包：`pages/{auth,customer,admin}`、`components/{common,orders,refunds}`。
-退款相关的写操作（提交申请 / 批准 / 拒绝）已接通并做过真机验收，其余未涉及的写操作仍是禁用状态。
+客户对话区（发消息、SSE 流式回复、进出会话恢复"等待审批"状态）与退款写操作
+（提交申请 / 批准 / 拒绝）均已接通并做过真机验收，其余未涉及的写操作仍是禁用状态。
 仅构建通过不代表联调已完成 —— 浏览器端验收脚本见 `.workbuddy/tools/browser_acceptance.mjs`。
 
 ## 文件的作用
 
 第一版业务表与状态说明见 [数据库结构](docs/database-schema.md)，实体位于 `src/supportflow/models/`。
-已配置 Alembic，初始版本包含七张业务表。新库建表、已有库接入和后续变更见 [数据库迁移说明](docs/database-migrations.md)。自动化测试：`.venv/Scripts/python.exe -m unittest discover -s tests -v`，或 `uv run pytest -q`（当前 38 项通过、52 个子用例）。
+已配置 Alembic，初始版本包含七张业务表。新库建表、已有库接入和后续变更见 [数据库迁移说明](docs/database-migrations.md)。自动化测试：`uv run pytest -q`，或 `.venv/Scripts/python.exe -m unittest discover -s tests -v`（2026-09-24 实测：**175 项通过、52 个子用例**）。
 
 - `pyproject.toml`：项目元信息和直接依赖，类似 Maven 的 pom.xml。
 - `uv.lock`：精确依赖版本，协作和部署时复现环境。
@@ -73,6 +130,6 @@
 （`--refresh` 可把已存在订单的支付/签收时间重新锚定到当前时刻），退款占位数据用 `seed_refunds`。
 把库还原到验收基线用 `.workbuddy/tools/reset_refund_state.py`。
 
-下一步：接入模型与 LangGraph（订单/退款工具、多轮追问、PostgreSQL checkpoint），再做政策检索，最后补部署脚本与评测报告。
+下一步：补一键启动的 compose（把 MySQL / PostgreSQL / Milvus 一次装好，免去手装三个数据库）、面向服务器的部署脚本，以及 LangSmith 评测报告。
 
 参考：[FastAPI 入门](https://fastapi.tiangolo.com/tutorial/first-steps/)、[uv 依赖管理](https://docs.astral.sh/uv/concepts/projects/dependencies/)。

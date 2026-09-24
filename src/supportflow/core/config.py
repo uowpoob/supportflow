@@ -42,10 +42,14 @@ class Settings(DatabaseSettings):
     # 那个开关管的是"要不要试"，这个开关管的是"要不要走"。
     RETRIEVAL_RERANK: bool = True
 
-    LANGSMITH_TRACING: bool
-    LANGSMITH_ENDPOINT: str
-    LANGSMITH_API_KEY: str
-    LANGSMITH_PROJECT: str
+    # LangSmith 是**可选**的观测工具：不填照样能启动、能对话，只是没有追踪记录。
+    # 这几项原先没有默认值（= 必填），结果是任何 import 到本模块的脚本或测试，
+    # 只要环境变量不齐就**在导入阶段**直接报错 —— 一个可选能力不该有这种权限。
+    # 现在全部给默认值：只想跑起来的人什么都不用配，想开追踪的人填 key 即可。
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_PROJECT: str = "supportflow"
 
     # LangGraph 对话记忆（checkpoint）用的 PostgreSQL 连接串，跑在 Docker 里。
     # 与业务库 MySQL 分开：MySQL 存业务数据并负责归属校验，Postgres 只存对话历史，
