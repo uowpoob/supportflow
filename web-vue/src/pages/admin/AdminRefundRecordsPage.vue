@@ -54,25 +54,19 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 退款执行流水 —— GET /admin/refund-records -->
   <ResourceListPage
     title="退款流水"
     :fetcher="fetchRefundRecords"
     :columns="COLUMNS"
   >
-    来自 <code>GET /api/admin/refund-records?offset=&amp;limit=</code>
-    ：批准之后真正打款给支付渠道的执行记录。
+    审批通过后实际打款的执行记录，包含成功时间和失败原因。
 
     <template #notice>
       <StubNotice>
-        这里关心的是<strong>执行结果</strong>而不是审批意见：<code>attempt_count</code>
-        （重试了几次）、<code>last_error</code>（失败原因）、<code>succeeded_at</code>
-        （成功时间）。
+        这里记录的是退款的执行结果。有申请不等于退过款 ——
+        只有审批通过的申请才会留下记录，被拒绝的不会出现在这里。
         <br />
-        注意<strong>有申请 ≠ 退过款</strong>：只有"批准"才在这一页留下行，
-        被拒绝的申请永远不会出现在这里。演示里的退款是<strong>模拟</strong>的
-        （不真调支付渠道），所以每次都是 <code>succeeded</code>、<code>attempt_count</code> 恒为 1，
-        <code>last_error</code> 永远为空 —— 这两列是为将来接真实渠道留的。
+        当前演示环境的退款是模拟执行的，结果均为成功。
       </StubNotice>
     </template>
 

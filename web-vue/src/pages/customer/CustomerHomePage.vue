@@ -13,6 +13,7 @@ import { useAuth } from '../../auth/useAuth'
 import ChatThread from '../../components/chat/ChatThread.vue'
 import ConversationList from '../../components/chat/ConversationList.vue'
 import RetrievedSources from '../../components/chat/RetrievedSources.vue'
+import AppIcon from '../../components/common/AppIcon.vue'
 import ErrorAlert from '../../components/common/ErrorAlert.vue'
 import LoadingLine from '../../components/common/LoadingLine.vue'
 import { useApi } from '../../composables/useApi'
@@ -479,11 +480,13 @@ function selectConversation(id: string): void {
     </header>
 
     <div class="card-grid">
-      <RouterLink class="entry-card" to="/customer/orders">
+      <RouterLink class="entry-card entry-card--blue" to="/customer/orders">
+        <span class="entry-card__icon"><AppIcon name="box" :size="20" /></span>
         <span class="entry-card__title">我的订单</span>
         <span class="entry-card__desc">查看订单详情与退款资格</span>
       </RouterLink>
-      <RouterLink class="entry-card" to="/customer/refund-requests">
+      <RouterLink class="entry-card entry-card--amber" to="/customer/refund-requests">
+        <span class="entry-card__icon"><AppIcon name="receipt" :size="20" /></span>
         <span class="entry-card__title">我的退款申请</span>
         <span class="entry-card__desc">查看申请进度与审批意见</span>
       </RouterLink>
@@ -491,8 +494,8 @@ function selectConversation(id: string): void {
 
     <div class="chat-layout">
       <aside class="chat-layout__side">
-        <div class="side-head side-head--row">
-          <span>会话</span>
+        <div class="side-head">
+          <span class="side-head__label"><AppIcon name="chat" :size="16" />会话</span>
           <!-- 一轮没跑完之前不让切走：结果要贴回发起时那个会话，切了就对不上。
                后端那边同一个会话也会返回 409，这里只是提前避免。 -->
           <button
@@ -526,6 +529,7 @@ function selectConversation(id: string): void {
 
       <section class="chat-layout__main">
         <div v-if="selectedId === null" class="chat-empty">
+          <span class="chat-empty__icon"><AppIcon name="chat" :size="26" /></span>
           <p class="chat-empty__title">选一个会话开始</p>
           <p class="muted">左边点一个已有的会话，或者点「+ 新建」开一个新的。</p>
         </div>
@@ -593,8 +597,9 @@ function selectConversation(id: string): void {
               :disabled="sending || waiting || runningElsewhere"
               :placeholder="inputPlaceholder"
             />
-            <button type="submit" class="btn btn--primary" :disabled="!canSend">
-              {{ sending ? '回复中…' : '发送' }}
+            <button type="submit" class="btn btn--primary btn--icon" :disabled="!canSend">
+              <AppIcon name="send" :size="15" />
+              <span>{{ sending ? '回复中…' : '发送' }}</span>
             </button>
           </form>
         </template>

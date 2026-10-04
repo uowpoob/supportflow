@@ -94,22 +94,18 @@ class ItemSpec:
 
 # 演示用商品目录。key 是短别名，只在本文件里用。
 CATALOG: dict[str, Product] = {
-    # --- 手机与配件 ---
     "iphone15pm": Product("SKU-AP-IP15PM-256", "Apple iPhone 15", "Pro Max 256G", 999900),
     "iphone15case": Product("SKU-AP-IP15-CASE", "Apple iPhone 15 硅胶保护壳", "磁吸款", 39900),
     "airpodspro2": Product("SKU-AP-APP2-USBC", "Apple AirPods Pro", "第二代 USB-C", 189900),
-    # --- 音频 ---
     "wh1000xm5": Product("SKU-SONY-WH1000XM5", "索尼 WH-1000XM5", "无线降噪头戴式", 289900),
     "jblgo4": Product("SKU-JBL-GO4", "JBL GO 4 便携音箱", "GO 4", 29900),
     "mispkplay": Product("SKU-MI-SPK-PLAY", "小米 蓝牙音箱 Play", "小米音箱 Play", 12900),
-    # --- 电源与线材 ---
     "mipb20": Product("SKU-MI-PB20", "小米 移动电源", "20000mAh 22.5W", 12900),
     "mipb10": Product("SKU-MI-PB10", "小米 移动电源", "10000mAh 22.5W", 9900),
     "anker65w": Product("SKU-ANK-A2666", "Anker 安克 65W 氮化镓充电器", "A2666", 19900),
     "apple20w": Product("SKU-AP-A2305", "Apple 20W USB-C 电源适配器", "A2305", 14900),
     "ugreencable": Product("SKU-UG-CD137", "绿联 Type-C 数据线 2m", "CD137 100W", 5900),
     "apc05": Product("SKU-AP-C05", "Apple USB-C 转接线", "0.5m", 14900),
-    # --- 电脑与办公 ---
     "asusfa507": Product("SKU-ASUS-FA507NV", "华硕 天选5 游戏本", "FA507NV", 749900),
     "matebook14": Product("SKU-HW-MB14-2024", "华为 MateBook 14", "2024 酷睿版", 549900),
     "xiaoxinpad": Product("SKU-LENOVO-TB350FU", "联想 小新 Pad", "TB350FU", 139900),
@@ -120,7 +116,6 @@ CATALOG: dict[str, Product] = {
     "c920": Product("SKU-LOGI-C920", "罗技 C920 摄像头", "C920 Pro", 49900),
     "wristrest": Product("SKU-LOGI-WR1", "罗技 键盘腕托", "记忆棉", 6900),
     "aocq27g2s": Product("SKU-AOC-Q27G2S", "AOC 27 英寸 2K 显示器", "Q27G2S", 129900),
-    # --- 可穿戴与周边 ---
     "gt4_46": Product("SKU-HW-GT4-46", "华为 WATCH GT 4", "46mm 时尚款", 148800),
     "gt4_41": Product("SKU-HW-GT4-41", "华为 WATCH GT 4 时尚款", "41mm", 168800),
     "tplinkxdr": Product("SKU-TP-XDR3010", "TP-LINK AX3000 路由器", "TL-XDR3010", 22900),
@@ -163,7 +158,6 @@ class OrderSpec:
 
 
 DEMO_ORDERS: tuple[OrderSpec, ...] = (
-    # ------------------------------ customer1（号段 126091843002） ------------------------------
     OrderSpec(
         order_no="1260918430020001",
         label="C1-01",
@@ -251,10 +245,8 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         created_ago=timedelta(days=16),
         paid_ago=timedelta(days=15),
         shipped_ago=timedelta(days=14),
-        # ⚠️ 这里**不能**写"恰好 14 天"：时间是相对播种那一刻算出来的，
-        # 秒针一走就变成 14 天零几秒，判定立刻翻面成超期。
-        # 精确边界（14 天整允许、14 天零 1 微秒拒绝）由针对纯函数的单元测试覆盖，
-        # 演示数据只负责"窗口快到期"这种稳定可观察的状态。
+        # 不能写"恰好 14 天"：时间相对播种时刻算，秒针一走就翻面成超期；
+        # 精确边界由纯函数单测覆盖，演示数据只负责"窗口快到期"的稳定状态。
         delivered_ago=timedelta(days=13),
         items=(item("k380"),),
         note="窗口内靠后：签收 13 天，距退款截止只剩约 1 天",
@@ -416,7 +408,6 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         ),
         note="一单多商品（三行）+ 数量大于 1：签收 2 天，合计 1465.00 元",
     ),
-    # ------------------------------ customer2（号段 127018902963） ------------------------------
     OrderSpec(
         order_no="1270189029630001",
         label="C2-01",
@@ -632,8 +623,7 @@ def _validate() -> None:
         if spec.created_ago is None:
             raise ValueError(f"{spec.order_no}: created_ago 必填，订单不可能没有下单时间")
 
-        # 已支付 / 已退款订单的实付必须等于明细合计。
-        # 未支付订单实付为 0，明细是其原价快照，不参与比对。
+        # 已支付/已退款：实付须等于明细合计；未支付实付为 0（明细是原价快照），不比对。
         if spec.payment_status is not PaymentStatus.UNPAID:
             items_total = sum(i.quantity * i.unit_price_cents for i in spec.items)
             if items_total != spec.paid_amount_cents:
@@ -648,8 +638,7 @@ def _validate() -> None:
         if spec.delivered_ago is None and spec.fulfillment_status is FulfillmentStatus.DELIVERED:
             raise ValueError(f"{spec.order_no}: 状态已签收，必须有签收时间")
 
-        # 时间线：越靠后的环节，距今越近。换算成"多久以前"就是**单调不增**。
-        # 写成"必须严格递减"会误伤同一秒内完成的动作（比如当天发货当天签收）。
+        # 时间线换算成"多久以前"须单调不增；严格递减会误伤同一秒内的动作（如当天发货当天签收）。
         previous_name: str | None = None
         previous_ago: timedelta | None = None
         for name, ago in (

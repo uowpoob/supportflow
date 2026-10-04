@@ -55,18 +55,14 @@ from supportflow.schemas.refunds.customer import (
 from supportflow.schemas.refunds.eligibility import RefundEligibilityOut
 
 __all__ = [
-    # 资格
     "RefundEligibilityOut",
-    # 共用片段
     "RefundApprovalOut",
     "RefundOrderBrief",
     "RefundRecordOut",
-    # 客户侧
     "RefundRequestCreate",
     "RefundRequestBrief",
     "MyRefundRequestDetail",
     "MyRefundRequestPage",
-    # 管理侧
     "RefundDecisionIn",
     "AdminRefundRequestBrief",
     "AdminRefundRequestDetail",

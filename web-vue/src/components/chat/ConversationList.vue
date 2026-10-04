@@ -6,6 +6,9 @@ import type { Conversation } from '../../types'
  *
  * 只负责"画出来 + 告诉你点了哪个"，一个请求都不发 ——
  * 数据从哪来、什么时候重新拉，全在页面里，这样只有一处需要看。
+ *
+ * 全部会话都列出来，一条不删；会话攒多了由**外面那个独立盒子**（`.side-scroll`，
+ * 自带边框底色、`flex: 1` + `overflow-y: auto`）自己上下滚。左栏高度不变，右栏底边永远和它齐平。
  */
 defineProps<{
   items: Conversation[]
@@ -36,29 +39,29 @@ function timeLabel(value: string): string {
 </script>
 
 <template>
-  <div v-if="items.length === 0" class="side-empty">
-    <p>还没有会话</p>
-    <p class="muted">点上面的「+ 新建」开一个，然后在右边提问。</p>
-  </div>
+  <!-- 独立滚动容器：会话再多也只在这个盒子里面上下拖。
+       它自己有边界、有高度上限 —— 既不撑长左栏，也不会让整个页面跟着滚。 -->
+  <div class="side-scroll">
+    <div v-if="items.length === 0" class="side-empty">
+      <p>还没有会话</p>
+      <p class="muted">点上面的「+ 新建」开一个，然后在右边提问。</p>
+    </div>
 
-  <ul v-else class="side-list">
-    <li
-      v-for="item in items"
-      :key="item.id"
-      class="side-list__item side-list__item--flush"
-    >
-      <button
-        type="button"
-        class="side-list__btn"
-        :class="{ 'side-list__btn--active': item.id === selectedId }"
-        :disabled="disabled"
-        @click="emit('select', item.id)"
-      >
-        <span class="side-list__title">{{ item.title }}</span>
-        <!-- 等待审批 = 这一轮卡住了，必须让它在列表里就能被看见，不用点进去才知道。 -->
-        <span v-if="waitingIds?.includes(item.id)" class="side-list__badge">等审批</span>
-        <span class="side-list__time">{{ timeLabel(item.updated_at) }}</span>
-      </button>
-    </li>
-  </ul>
+    <ul v-else class="side-list">
+      <li v-for="item in items" :key="item.id" class="side-list__item side-list__item--flush">
+        <button
+          type="button"
+          class="side-list__btn"
+          :class="{ 'side-list__btn--active': item.id === selectedId }"
+          :disabled="disabled"
+          @click="emit('select', item.id)"
+        >
+          <span class="side-list__title">{{ item.title }}</span>
+          <!-- 等待审批 = 这一轮卡住了，必须让它在列表里就能被看见，不用点进去才知道。 -->
+          <span v-if="waitingIds?.includes(item.id)" class="side-list__badge">等审批</span>
+          <span class="side-list__time">{{ timeLabel(item.updated_at) }}</span>
+        </button>
+      </li>
+    </ul>
+  </div>
 </template>

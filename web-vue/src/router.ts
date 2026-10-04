@@ -23,17 +23,17 @@ import NotFoundPage from './pages/NotFoundPage.vue'
 import type { UserRole } from './types'
 
 const CUSTOMER_NAV: NavItem[] = [
-  { to: '/customer', label: '我的售后', end: true },
-  { to: '/customer/orders', label: '我的订单' },
-  { to: '/customer/refund-requests', label: '我的申请' },
+  { to: '/customer', label: '我的售后', icon: 'chat', end: true },
+  { to: '/customer/orders', label: '我的订单', icon: 'box' },
+  { to: '/customer/refund-requests', label: '我的申请', icon: 'receipt' },
 ]
 
 const ADMIN_NAV: NavItem[] = [
-  { to: '/admin', label: '概览', end: true },
-  { to: '/admin/orders', label: '订单' },
-  { to: '/admin/refunds', label: '退款审批' },
-  { to: '/admin/refund-approvals', label: '审批记录' },
-  { to: '/admin/refund-records', label: '退款流水' },
+  { to: '/admin', label: '概览', icon: 'home', end: true },
+  { to: '/admin/orders', label: '订单', icon: 'box' },
+  { to: '/admin/refunds', label: '退款审批', icon: 'check-badge' },
+  { to: '/admin/refund-approvals', label: '审批记录', icon: 'clipboard' },
+  { to: '/admin/refund-records', label: '退款流水', icon: 'wallet' },
 ]
 
 /** 路由上的 `meta.role` 由下面的守卫读取 —— 这是"这个区域谁能进"的唯一声明处。 */

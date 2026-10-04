@@ -80,19 +80,14 @@ const record = computed(() => props.data.refund_record)
       </div>
     </dl>
 
-    <h4 class="kv__key">客户填写的原因（原文）</h4>
+    <h4 class="kv__key">申请原因</h4>
     <p class="codeblock">{{ data.reason_original }}</p>
-    <p class="muted">
-      原因原文原样入库，不做改写。分类字段
-      <code>reason_category</code> 现在为空 —— 留给第 5 天的模型去做，
-      在此之前不靠关键词猜。
-    </p>
   </section>
 
   <section class="section">
     <h3 class="section__title">订单依据</h3>
     <p class="muted">
-      管理员审批时看的就是这几项 —— 退款规则只依赖它们，所以不用再点进订单页翻一遍。
+      下面几项是判定这笔退款是否合规的依据。
     </p>
     <dl class="kv">
       <div class="kv__row">
@@ -115,15 +110,16 @@ const record = computed(() => props.data.refund_record)
       </div>
     </dl>
     <p v-if="data.amount_cents !== data.order.paid_amount_cents" class="alert alert--warn">
-      申请金额与订单实付不一致（{{ formatCents(data.amount_cents) }} vs
-      {{ formatCents(data.order.paid_amount_cents) }}）。批准前会再次核对，对不上会拒绝执行。
+      申请金额（{{ formatCents(data.amount_cents) }}）与订单实付金额（{{
+        formatCents(data.order.paid_amount_cents)
+      }}）不一致。审批前会再次核对，对不上会拒绝执行。
     </p>
   </section>
 
   <section class="section">
     <h3 class="section__title">审批结果</h3>
     <p v-if="!approval" class="muted">
-      还没有任何审批 —— 这条申请还在待办队列里，没人处理过。
+      还没有审批结果，这条申请正在等待处理。
     </p>
     <dl v-else class="kv">
       <div class="kv__row">
@@ -152,8 +148,8 @@ const record = computed(() => props.data.refund_record)
   <section class="section">
     <h3 class="section__title">退款流水</h3>
     <p v-if="!record" class="muted">
-      还没有退款流水。<strong>有申请不等于退过钱</strong> ——
-      只有管理员批准并执行成功，这张表里才会有行。
+      还没有退款记录。<strong>提交申请不等于退款成功</strong> ——
+      只有审批通过并完成打款，才会有退款记录。
     </p>
     <dl v-else class="kv">
       <div class="kv__row">

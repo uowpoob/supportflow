@@ -25,13 +25,6 @@ async def list_orders(
     db: AsyncSession = Depends(get_db),
 ) -> Success[MyOrderPage]:
     """我的订单列表（分页）。
-
-    过滤条件只有一条：`orders.user_id == 当前登录用户的 id`。
-    那个 id **只可能**来自 Cookie（`require_customer` 里解析出来的），
-    接口上没有任何地方能传 user_id —— 不是"不信任前端"，是这条路根本不存在。
-
-    准入已经挂在包里了，handler 里再挂一次不是重复执行（FastAPI 会缓存同一个
-    依赖），只是为了拿到 `user` 对象。
     """
     rows, total = await list_orders_for_user(db, user.id, offset, limit)
     page = MyOrderPage(

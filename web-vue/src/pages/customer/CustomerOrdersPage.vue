@@ -36,7 +36,6 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 我的订单 —— GET /customer/orders -->
   <ResourceListPage
     title="我的订单"
     :fetcher="fetchMyOrders"
@@ -44,12 +43,10 @@ const COLUMNS: Column[] = [
     detail-key="order_no"
     :detail-to="(orderNo: string) => `/customer/orders/${orderNo}`"
   >
-    来自 <code>GET /api/customer/orders?offset=&amp;limit=</code>
-    ，只包含当前登录账号自己的订单（身份取自 Cookie，不是请求参数）。
+    你名下的全部订单。点「查看」进入订单详情，核对商品明细与实付金额。
 
     <template #empty-hint>
-      这个账号名下还没有订单。演示数据用
-      <code>python -m supportflow.db.seed_orders</code> 生成。
+      暂时还没有订单。
     </template>
   </ResourceListPage>
 </template>

@@ -1,12 +1,4 @@
 """退款读操作入口：申请列表 / 详情、审批记录、退款流水。
-
-SQL 全部在 `repository/refund/queries.py`，这里只是转发 —— 保持这个入口不变，
-HTTP 路由和 Agent Tool 的 import 就一行都不用改。
-
-⚠️ 两个**事务原语**（`_end_transaction` / `_reload`）不在这里了，搬到了
-`repository/refund/transaction.py`。它们不是"查询"，而是写完之后必须做的一次收尾
-（先提交、再重读，否则会返回旧快照）—— 所以 `requests.py` / `approvals.py`
-从那边 import，别在这儿找。
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -8,13 +8,12 @@ import EmptyState from './EmptyState.vue'
 import ErrorAlert from './ErrorAlert.vue'
 import LoadingLine from './LoadingLine.vue'
 import Pager from './Pager.vue'
-import RawPanel from './RawPanel.vue'
 import type { Column } from './table'
 
 const DEFAULT_LIMIT = 10
 
 /**
- * 列表页的公共骨架：请求 → 四种状态（加载中 / 失败可重试 / 空 / 有数据）→ 分页 → 原始返回。
+ * 列表页的公共骨架：请求 → 四种状态（加载中 / 失败可重试 / 空 / 有数据）→ 分页。
  *
  * 几个列表页都在用它，每个页面自己只剩三件事：标题、请求哪个接口、点哪一列进详情。
  * 想看单个页面的效果，先看 `AdminOrdersPage.vue`（最短）。
@@ -85,7 +84,6 @@ const { state, data, error, reload } = useApi(() =>
           @change="offset = $event"
         />
       </template>
-      <RawPanel :value="data.raw" />
     </template>
   </div>
 </template>

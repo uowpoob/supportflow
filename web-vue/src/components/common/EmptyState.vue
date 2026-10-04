@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppIcon from './AppIcon.vue'
+
 /**
  * 请求成功但没有数据。
  * 必须和"后端还没实现"分开表述 —— 否则分不清是页面坏了还是本来就没内容。
@@ -10,6 +12,7 @@ defineProps<{ title: string; hint?: string }>()
 
 <template>
   <div class="empty-state">
+    <span class="empty-state__icon"><AppIcon name="inbox" :size="24" /></span>
     <p class="empty-state__title">{{ title }}</p>
     <p v-if="hint || $slots.hint" class="empty-state__hint">
       <slot name="hint">{{ hint }}</slot>

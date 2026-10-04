@@ -5,6 +5,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api/client'
 import { roleLabel } from '../auth/paths'
 import { useAuth } from '../auth/useAuth'
+import AppIcon from '../components/common/AppIcon.vue'
 import type { NavItem } from './nav'
 
 defineProps<{ nav: NavItem[] }>()
@@ -44,32 +45,38 @@ async function handleSignOut() {
 <template>
   <div class="app-shell">
     <header class="topbar">
-      <div class="topbar__brand">
-        <span class="topbar__logo" aria-hidden="true">SF</span>
-        <span class="topbar__title">SupportFlow</span>
-      </div>
+      <!-- .topbar__inner 走和正文一样的总宽度：商标、用户名跟下面的卡片左右对齐。 -->
+      <div class="topbar__inner">
+        <div class="topbar__brand">
+          <span class="topbar__logo" aria-hidden="true">SF</span>
+          <span class="topbar__title">SupportFlow</span>
+        </div>
 
-      <nav class="topbar__nav" aria-label="主导航">
-        <RouterLink
-          v-for="item in nav"
-          :key="item.to"
-          :to="item.to"
-          :class="isActive(item) ? 'navlink navlink--active' : 'navlink'"
-        >
-          {{ item.label }}
-        </RouterLink>
-      </nav>
+        <nav class="topbar__nav" aria-label="主导航">
+          <RouterLink
+            v-for="item in nav"
+            :key="item.to"
+            :to="item.to"
+            :class="isActive(item) ? 'navlink navlink--active' : 'navlink'"
+          >
+            <AppIcon v-if="item.icon" :name="item.icon" :size="16" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </nav>
 
-      <div class="topbar__user">
-        <template v-if="user">
-          <span class="userchip">
-            <span class="userchip__name">{{ user.username }}</span>
-            <span class="userchip__role">{{ roleLabel(user.role) }}</span>
-          </span>
-          <button type="button" class="btn btn--ghost" :disabled="signingOut" @click="handleSignOut">
-            {{ signingOut ? '退出中…' : '退出' }}
-          </button>
-        </template>
+        <div class="topbar__user">
+          <template v-if="user">
+            <span class="userchip">
+              <span class="userchip__name">{{ user.username }}</span>
+              <span class="userchip__role" :class="`userchip__role--${user.role}`">
+                {{ roleLabel(user.role) }}
+              </span>
+            </span>
+            <button type="button" class="btn btn--ghost" :disabled="signingOut" @click="handleSignOut">
+              {{ signingOut ? '退出中…' : '退出' }}
+            </button>
+          </template>
+        </div>
       </div>
     </header>
 

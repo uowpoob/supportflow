@@ -22,8 +22,8 @@ const entries = computed(() => Object.entries(props.data).filter(([key]) => !pro
 <template>
   <EmptyState
     v-if="entries.length === 0"
-    title="后端返回了空对象"
-    hint="接口目前是占位实现（return result.success()），字段还没开始写。"
+    title="暂无详情"
+    hint="这一项暂时没有可显示的内容。"
   />
   <dl v-else class="kv">
     <div v-for="[key, value] in entries" :key="key" class="kv__row">

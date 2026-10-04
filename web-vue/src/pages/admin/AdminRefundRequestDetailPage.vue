@@ -9,6 +9,7 @@ import ErrorAlert from '../../components/common/ErrorAlert.vue'
 import LoadingLine from '../../components/common/LoadingLine.vue'
 import RefundRequestSections from '../../components/refunds/RefundRequestSections.vue'
 import StubNotice from '../../components/common/StubNotice.vue'
+import { REFUND_STATUS_LABELS, labelOf } from '../../labels'
 import type { ApprovalDecision } from '../../types'
 
 /** 退款申请详情 + 审批 —— GET / POST /admin/refund-requests/{request_key} */
@@ -67,7 +68,7 @@ async function resumeConversation(): Promise<void> {
   resumeNotice.value = ''
   try {
     await resumeRefundApproval(requestKey)
-    resumeNotice.value = '已请求恢复客户会话。若客户那边没有立刻更新，让 TA 刷新一下会话即可。'
+    resumeNotice.value = '已请求同步客户对话。若客户那边没有立刻更新，让他刷新一下会话即可。'
   } catch (err) {
     actionError.value = err instanceof ApiError ? err.message : '恢复客户会话失败'
   } finally {
@@ -84,8 +85,7 @@ async function resumeConversation(): Promise<void> {
       </p>
       <h2 class="page-head__title">退款申请审批</h2>
       <p class="page-head__desc">
-        来自 <code>GET /api/admin/refund-requests/{{ requestKey }}</code>
-        ：客户填写的原因原文、订单依据、已有审批与退款流水。
+        客户填写的原因、订单依据，以及已有的审批意见与退款记录。
       </p>
     </header>
 
@@ -98,12 +98,9 @@ async function resumeConversation(): Promise<void> {
 
         <template v-if="decidable">
           <StubNotice>
-            <strong>批准会立刻执行模拟退款</strong>：在同一个数据库事务里改申请状态、
-            写退款流水、把订单标成已退款。批准前会再核对一次归属、支付状态和实付金额，
-            对不上就拒绝执行并给出原因。
-            审批人取自登录态，请求体里没有 <code>admin_id</code>，伪造不了。
-            如果这条申请是客户在对话里提交的，批准或拒绝之后服务端会顺带把那条会话推一步，
-            客户会在自己的对话里看到结果。
+            批准后会立即执行退款：更新申请状态、记录退款流水，并把订单标记为已退款。
+            批准前会再核对一次订单归属、支付状态和实付金额，对不上会拒绝执行并说明原因。
+            如果这条申请是客户在对话里提交的，审批结果会同步回那条对话，客户能看到。
           </StubNotice>
 
           <div class="field">
@@ -142,9 +139,8 @@ async function resumeConversation(): Promise<void> {
         </template>
 
         <p v-else class="muted">
-          这条申请已经是「{{ data.status }}」，审批按钮已禁用 ——
-          已生效的决策不能被覆盖。重复提交<strong>相同</strong>的决策是幂等的（返回当前结果），
-          用<strong>不同</strong>的决策去打会返回 409。
+          这条申请已经是「{{ labelOf(REFUND_STATUS_LABELS, data.status) }}」，不能再改判了。
+          重复提交相同的决定不会有任何影响，改成相反的决定会被拒绝。
         </p>
 
         <!-- 审批已落库之后才可能出现这条分支：客户那条会话没被推起来时手动重试。 -->
@@ -162,8 +158,7 @@ async function resumeConversation(): Promise<void> {
             </button>
           </div>
           <p class="muted">
-            客户会话被暂停在退款申请那一步，审批完成后由服务端推它继续。
-            如果客户说没收到审批结果，点上面的按钮再推一次 —— 重复点不会重复退款。
+            如果客户的对话没有自动更新到审批结果，点上面的按钮再同步一次，重复点击不会重复退款。
           </p>
         </template>
       </section>

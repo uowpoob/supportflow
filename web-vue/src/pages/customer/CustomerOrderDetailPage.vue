@@ -56,8 +56,7 @@ const blockReason = computed(() => {
     back-label="返回我的订单"
     :omit-keys="OMIT_KEYS"
   >
-    来自 <code>GET /api/customer/orders/{{ orderNo }}</code>，含商品明细。
-    不是我的订单会返回 404「订单不存在」，跟订单根本不存在时的响应完全一样。
+    核对这一单的商品明细与实付金额。符合条件的可以直接在下方提交退款申请。
 
     <!-- 跟管理侧详情同一个骨架：时间线 + 商品明细，都靠作用域插槽拿到主数据 -->
     <template #data-extra="{ data }">

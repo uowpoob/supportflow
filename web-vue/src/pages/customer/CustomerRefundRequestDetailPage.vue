@@ -22,10 +22,7 @@ const { state, data, error, reload } = useApi(() => fetchMyRefundRequest(request
       </p>
       <h2 class="page-head__title">退款申请详情</h2>
       <p class="page-head__desc">
-        来自 <code>GET /api/customer/refund-requests/{{ requestKey }}</code>
-        ：当前状态、客户填写的原因、管理员的审批意见、以及退款是否真的执行过。
-        <strong>别人的申请和不存在，返回的都是同一个 404</strong> ——
-        区分开就等于告诉别人"这个申请是存在的"。
+        这条申请的处理进度、你填写的原因、审批意见，以及退款是否已经执行。
       </p>
     </header>
 

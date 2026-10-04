@@ -29,9 +29,24 @@ function toneOf(status: RetrievalStatus): string {
   return TONE[status] ?? 'tag--muted'
 }
 
-/** 分数是 0~1 的小数，留三位足够看；`score` 为空时整段不显示。 */
-function scoreLabel(score: number | null): string {
-  return score === null ? '' : `分数 ${score.toFixed(3)}`
+/**
+ * 分数 → 相关度档位。
+ *
+ * 界面上只给"高/中/低"、不给 `0.823` 这种原始分：分数要么来自融合排序、要么来自重排模型，
+ * **不能跨查询比较**，摆给用户既看不懂也没法用。阈值只管呈现，不参与任何判断。
+ */
+const RELEVANCE: [min: number, label: string][] = [
+  [0.7, '相关度 高'],
+  [0.4, '相关度 中'],
+]
+
+/** `score` 为空时整段不显示。 */
+function relevanceLabel(score: number | null): string {
+  if (score === null) return ''
+  for (const [min, label] of RELEVANCE) {
+    if (score >= min) return label
+  }
+  return '相关度 低'
 }
 </script>
 
@@ -49,7 +64,7 @@ function scoreLabel(score: number | null): string {
         <span class="evidence__title">{{ item.title }}</span>
         <span v-if="item.section" class="muted"> · {{ item.section }}</span>
         <span class="evidence__source">{{ item.source }}</span>
-        <span v-if="item.score !== null" class="muted"> {{ scoreLabel(item.score) }}</span>
+        <span v-if="item.score !== null" class="muted"> {{ relevanceLabel(item.score) }}</span>
       </li>
     </ol>
   </div>

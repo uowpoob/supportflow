@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from supportflow.models.entities import Order, RefundApproval, RefundRecord, RefundRequest
 
 
-@dataclass(frozen=True,slots=True)
+@dataclass(frozen=True)
 class RefundRequestRow:
     """列表行：申请本身 + 订单号 [+ 归属信息（仅管理侧）]。
 
@@ -30,7 +30,7 @@ class RefundRequestRow:
     username: str | None = None
 
 
-@dataclass(frozen=True,slots=True)
+@dataclass(frozen=True)
 class RefundRequestView:
     """详情：申请 + 订单依据 + 已有审批 + 退款流水。
 

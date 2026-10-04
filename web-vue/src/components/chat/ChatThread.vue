@@ -65,7 +65,7 @@ onMounted(scrollToBottom)
       v-if="messages.length === 0 && !optimistic && !pending && !streaming && !runningElsewhere"
       class="muted chat-thread__hint"
     >
-      这个会话还没有消息。在下面提问，Agent 会先看你的订单和退款情况，再决定要不要查知识库。
+      这个会话还没有消息。在下面提问，助手会先看你的订单和退款情况，再决定要不要查售后政策。
     </p>
 
     <!-- `:key` 用消息 id 而不是下标：追加消息时下标会整体挪位，Vue 会认错元素。 -->

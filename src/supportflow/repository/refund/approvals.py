@@ -1,11 +1,4 @@
 """审批相关的写入与加锁读：行锁、审批行、退款流水。
-
-`lock_request_by_key` / `lock_order_by_id` 都是 `SELECT ... FOR UPDATE`（行锁）。
-它们必须和调用方在**同一个事务**里才有效 —— 本层不 commit，正是为了这个：
-锁一直持有到 `services/refunds/approvals.py` 决定提交或回滚为止。
-
-`insert_*` 只负责把行挂到会话上，不提交；值（退款单号、时间戳、状态）全部由调用方
-传进来 —— 那些是业务决策，本层不替它做主。
 """
 
 from datetime import datetime

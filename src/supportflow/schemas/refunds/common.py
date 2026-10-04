@@ -96,13 +96,8 @@ class RefundRecordOut(BaseModel):
             succeeded_at=record.succeeded_at,
         )
 
-
-# ---- 详情里两个可空子块，客户侧/管理侧两个详情类共用一份构造逻辑 ----
-#
-# 不写成 `RefundApprovalOut` 的类方法，是因为它需要的是整个 `view`
-# （申请号、订单号、审批人都在里面），放进审批对象自己的类里会变成
-# "一个对象知道怎么构造另一个对象"的怪圈。
-
+# 不写成 `RefundApprovalOut` 的类方法：它需要整个 `view`（申请号、订单号、审批人都在里），
+# 塞进审批对象自己的类会变成「一个对象知道怎么构造另一个对象」的怪圈。
 
 def _approval_of(view: RefundRequestView) -> RefundApprovalOut | None:
     """审批块；没被决策过就是 None（"还没批"和"批了"在界面上是两回事）。"""

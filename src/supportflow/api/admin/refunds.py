@@ -1,15 +1,5 @@
 """管理员退款接口：待办队列、人工审批、审批记录与执行流水。
 
-三张表的分工容易混，先记清楚再用：
-
-| 表 | 是什么 | 什么时候有行 |
-| --- | --- | --- |
-| `refund_requests` | 客户提交的**申请**（待办就查它，`status='pending'`） | 客户一提交就有 |
-| `refund_approvals` | 管理员做出的**决策**（审计凭据） | 只有被批准/拒绝过才有 |
-| `refund_records` | 模拟退款的**执行流水** | 只有真正退过钱才有 |
-
-所以"待办列表"绝不能用 `refund_approvals` —— 批准之前那张表里根本没有对应行，
-拿它当待办会永远查出空数组。
 """
 
 import logging
@@ -107,14 +97,6 @@ async def decide_refund_request_endpoint(
     同一事务里做完四件事：改 `refund_requests.status`、插 `refund_approvals`、
     插 `refund_records`、把 `orders.payment_status` 改成 `refunded`。
     要么全成，要么全不成 —— 不存在"钱退了但状态没改"的中间状态。
-
-    幂等规则（重试友好，但不允许覆盖决策）：
-
-    - 重复提交**相同**决策 → 返回当前结果，不会产生第二条流水
-    - 用**不同**决策去打已决的申请 → 409，禁止覆盖
-
-    `admin_id` 只能来自登录态（`require_admin` 解析出来的用户），
-    请求体里没有这个字段 —— 跟客户侧不接受 `user_id` 是同一条边界。
     """
     try:
         await decide_refund_request(
@@ -127,7 +109,7 @@ async def decide_refund_request_endpoint(
     except RefundError as error:
         raise to_http_error(error) from error
 
-    # 返回决策后的完整详情，前端直接拿它替换本地状态，不用再发一次 GET。
+    # 前端直接拿返回体替换本地状态，无需再发一次 GET。
     view = await get_refund_request_any(db, request_key)
     assert view is not None
     # 审批已提交；图恢复失败不回滚业务决策，可用下方恢复接口重试。

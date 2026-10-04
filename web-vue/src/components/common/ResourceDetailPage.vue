@@ -6,10 +6,9 @@ import type { JsonRecord } from '../../types'
 import ErrorAlert from './ErrorAlert.vue'
 import KeyValueList from './KeyValueList.vue'
 import LoadingLine from './LoadingLine.vue'
-import RawPanel from './RawPanel.vue'
 
 /**
- * 详情页的公共骨架：一个 JSON 对象 → 键值表 + 原始返回 + 返回列表的链接。
+ * 详情页的公共骨架：一个 JSON 对象 → 键值表 + 返回列表的链接。
  * 后端字段没定，所以不写死字段名，直接把返回的对象摊开（见 `KeyValueList`）。
  *
  * ---
@@ -67,7 +66,6 @@ const { state, data, error, reload } = useApi(props.fetcher)
     <template v-else-if="state === 'done' && data">
       <KeyValueList :data="data" :omit="omitKeys" />
       <slot name="data-extra" :data="data" />
-      <RawPanel :value="data" />
     </template>
 
     <!-- 先结论（资格判定），后动作（提交表单）—— 见上面注释里的理由 -->

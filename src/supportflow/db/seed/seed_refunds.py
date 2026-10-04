@@ -99,7 +99,6 @@ class RefundSpec:
 
 
 DEMO_REFUNDS: tuple[RefundSpec, ...] = (
-    # ------------------------------ 已退款：完整闭环（3 条） ------------------------------
     RefundSpec(
         key_no=1,
         order_no="1260918430020004",
@@ -160,7 +159,6 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         ),
         note="完整闭环：同款耳机在 customer2 手里已退款",
     ),
-    # ------------------------------ 已批准：打款中 / 已打款（3 条） ------------------------------
     RefundSpec(
         key_no=2,
         order_no="1260918430020011",
@@ -221,7 +219,6 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         ),
         note="已批准、打款成功：覆盖 succeeded 状态（申请仍是 approved）",
     ),
-    # ------------------------------ 待审批：管理侧待办（3 条） ------------------------------
     RefundSpec(
         key_no=4,
         order_no="1260918430020015",
@@ -249,7 +246,6 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         created_ago=timedelta(hours=2),
         note="待审批：刚签收 6 小时就提交的申请，管理侧最新一条待办",
     ),
-    # ------------------------------ 已拒绝：名额已释放（3 条） ------------------------------
     RefundSpec(
         key_no=5,
         order_no="1260918430020012",
@@ -447,8 +443,7 @@ async def main() -> None:
                             f"实际是 {order.payment_status.value}"
                         )
 
-                    # 退款申请的外键指向会话；真实流程里由 create_refund_request 建，
-                    # 这里补一条，标题直接用订单号，方便在库里对上号。
+                    # 退款申请外键指向会话：真实流程由 create_refund_request 建，这里补一条，标题用订单号便于对号。
                     conversation_id = _conversation_id(spec.order_no)
                     conversation = await session.get(Conversation, conversation_id)
                     if conversation is None:

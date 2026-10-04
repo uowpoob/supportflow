@@ -7,9 +7,8 @@ from supportflow.core.database import DatabaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-# pydantic-settings 只把 .env 读进 Settings 对象，不会写入 os.environ；
-# 而 LangChain / LangSmith 的 tracer 只认进程环境变量，这里补上这一步。
-# override=False 保证已存在的系统环境变量优先，.env 仅作兜底。
+# pydantic-settings 不写入 os.environ，但 LangChain/LangSmith tracer 只认进程环境变量，故补 load_dotenv。
+# override=False：已存在的系统环境变量优先，.env 仅作兜底。
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
@@ -23,38 +22,28 @@ class Settings(DatabaseSettings):
     DASHSCOPE_API_KEY: SecretStr = SecretStr("")
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     EMBEDDING_MODEL: str = "text-embedding-v4"
-    # 只允许 text-embedding-v4 实际支持的档位，避免建 Milvus 集合时 dim 与模型不一致。
-    # 注意：不能写成 Literal[64, ...] —— 环境变量读进来是字符串 "1024"，
-    # Literal 不做类型转换会直接校验失败，必须用 int + 校验器。
+    # 只允许 text-embedding-v4 实际支持的档位，避免 Milvus 集合 dim 与模型不一致。
+    # 不能写 Literal[...]：环境变量读进来是字符串 "1024"，Literal 不做转换会校验失败，必须用 int + 校验器。
     EMBEDDING_DIM: int = 1024
 
-    # 阿里云百炼文本重排（rerank），走 DashScope 原生接口，不是 OpenAI 兼容模式。
-    # 实测（2026-09-15）：通用域名可直接调用，官方文档里的 {WorkspaceId}.cn-beijing.maas
-    # 域名并非必需。完整端点 = f"{DASHSCOPE_NATIVE_BASE_URL}/services/rerank/text-rerank/text-rerank"
+    # 重排走 DashScope 原生接口（非 OpenAI 兼容）。实测通用域名可直接调用，
+    # 文档里的 {WorkspaceId}.cn-beijing.maas 域名并非必需。
     DASHSCOPE_NATIVE_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
     RERANK_MODEL: str = "gte-rerank-v2"
 
-    # 检索是否在 RRF 融合之后再过一遍重排。
-    # 默认开：融合只看名次，重排能按语义把真正切题的条款提到前面。
-    # 设成 false 可以关掉 —— 重排要额外调一次百炼接口，是检索链路上唯一的外部依赖，
-    # 出问题（或想省调用量、做对照评测）时不必改代码。
-    # ⚠️ 关掉不代表没有重排兜底：rerank_chunks 自己失败时也会退回融合顺序，
-    # 那个开关管的是"要不要试"，这个开关管的是"要不要走"。
+    # 是否在 RRF 融合之后再过一遍重排（融合只看名次，重排按语义）。
+    # 关掉可省掉检索链路上唯一的外部依赖；rerank 自身失败时也会退回融合顺序。
     RETRIEVAL_RERANK: bool = True
 
-    # LangSmith 是**可选**的观测工具：不填照样能启动、能对话，只是没有追踪记录。
-    # 这几项原先没有默认值（= 必填），结果是任何 import 到本模块的脚本或测试，
-    # 只要环境变量不齐就**在导入阶段**直接报错 —— 一个可选能力不该有这种权限。
-    # 现在全部给默认值：只想跑起来的人什么都不用配，想开追踪的人填 key 即可。
+    # LangSmith 为可选观测工具，全部给默认值：缺省也能启动/导入，不必强制配置。
     LANGSMITH_TRACING: bool = False
     LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
     LANGSMITH_API_KEY: str = ""
     LANGSMITH_PROJECT: str = "supportflow"
 
-    # LangGraph 对话记忆（checkpoint）用的 PostgreSQL 连接串，跑在 Docker 里。
-    # 与业务库 MySQL 分开：MySQL 存业务数据并负责归属校验，Postgres 只存对话历史，
-    # 两边靠 thread_id（= conversations 表的主键）关联，没有跨库外键。
-    # 给个空默认值：本机没起 Postgres 时，只要不去建 checkpointer 就不会报错。
+    # LangGraph checkpoint 用的 PostgreSQL（Docker）。与业务库 MySQL 分开：
+    # MySQL 存业务数据并做归属校验，Postgres 只存对话历史，两边靠 thread_id 关联，无跨库外键。
+    # 空默认值：本机没起 Postgres 时，不建 checkpointer 就不会报错。
     LANGGRAPH_PG_DSN: str = ""
     MILVUS_URI: str = ""
     DB_NAME: str

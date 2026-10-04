@@ -17,9 +17,6 @@ from supportflow.schemas.refunds.common import (
 )
 from supportflow.services.refunds.types import RefundRequestRow, RefundRequestView
 
-# ------------------------------- 请求 -------------------------------
-
-
 class RefundRequestCreate(BaseModel):
     """提交退款申请。
 
@@ -52,10 +49,6 @@ class RefundRequestCreate(BaseModel):
         if not stripped:
             raise ValueError("退款原因不能为空或只有空白字符")
         return stripped
-
-
-# ------------------------------- 列表与详情 -------------------------------
-
 
 class RefundRequestBrief(BaseModel):
     """客户侧列表行。没有 `user_id` / `username` —— 这条申请本来就是他的。"""
@@ -108,12 +101,7 @@ class MyRefundRequestDetail(RefundRequestBrief):
             refund_record=_record_of(view),
         )
 
-
-# ------------------------------- 分页信封 -------------------------------
-#
-# 字段名固定 `items` / `total` / `offset` / `limit` —— 前端 `api/list.ts` 按
-# `items` / `total` 认列表，改名要前后端一起改。
-
+# 分页信封字段名固定 `items`/`total`/`offset`/`limit`，前端 `api/list.ts` 按此认列表，改名需前后端同步。
 
 class MyRefundRequestPage(BaseModel):
     items: list[RefundRequestBrief]

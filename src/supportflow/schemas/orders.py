@@ -111,15 +111,8 @@ class OrderPage(BaseModel):
     offset: int
     limit: int
 
-
-# ------------------------- 客户侧（"我的订单"） -------------------------
-#
-# 为什么不复用上面的 OrderBrief / OrderDetail？
-#
-# 因为那两个对象里有 `user_id` 和 `username` —— 那是**给管理员看归属**用的。
-# 客户看自己的订单，"归属"这一列恒等于他自己，给了纯属噪音；而且 service 为了
-# 填这两个字段还得白白 join 一次 users 表。接口结构该跟使用场景走，不是跟表走。
-
+# 客户侧不复用 OrderBrief/OrderDetail：那两个对象带 `user_id`/`username`（给管理员看归属），
+# 客户看自己的订单恒等于本人，给了是噪音，且 service 要为它多 join 一次 users 表。
 
 class MyOrderBrief(BaseModel):
     """客户侧列表行。没有 user_id / username —— 这单本来就是他的。"""

@@ -19,12 +19,6 @@ async def list_orders(
     db: AsyncSession = Depends(get_db),
 ) -> Success[OrderPage]:
     """全部订单列表（分页）。
-
-    管理员不做归属过滤：这个接口的语义就是"所有人的单"，准入由 `__init__.py`
-    挂的 `require_admin` 保证（非管理员一律 403）。
-
-    `limit` 设上限不是洁癖 —— 不加的话 `?limit=999999` 一次把全表拉进内存，
-    等于白送一条拖垮服务的方式。
     """
     rows, total = await list_all_orders(db, offset, limit)
     page = OrderPage(

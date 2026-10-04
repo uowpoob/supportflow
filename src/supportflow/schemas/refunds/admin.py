@@ -19,14 +19,10 @@ from supportflow.schemas.refunds.common import (
 from supportflow.schemas.refunds.customer import RefundRequestBrief
 from supportflow.services.refunds.types import RefundRequestRow, RefundRequestView
 
-# ------------------------------- 请求 -------------------------------
-
-
 class RefundDecisionIn(BaseModel):
     """管理员审批。
 
     `decision` 直接复用 `ApprovalDecision` 枚举（`approved` / `rejected`），
-    不另起一套 `approve` / `reject` —— 两套写法迟早会在某处对不上。
     """
 
     decision: ApprovalDecision
@@ -40,10 +36,6 @@ class RefundDecisionIn(BaseModel):
             return None
         stripped = value.strip()
         return stripped or None
-
-
-# ------------------------------- 列表与详情 -------------------------------
-
 
 class AdminRefundRequestBrief(RefundRequestBrief):
     """管理侧列表行：在客户侧那五个字段之上，多出**归属**信息。"""
@@ -94,10 +86,6 @@ class AdminRefundRequestDetail(AdminRefundRequestBrief):
             approval=_approval_of(view),
             refund_record=_record_of(view),
         )
-
-
-# ------------------------------- 分页信封 -------------------------------
-
 
 class AdminRefundRequestPage(BaseModel):
     items: list[AdminRefundRequestBrief]

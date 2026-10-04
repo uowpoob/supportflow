@@ -19,16 +19,15 @@ def build_support_agent(
     checkpointer=None,
     knowledge_context: str | None = None,
 ):
-    """身份与会话由调用方提供，经工具闭包固定，不让模型填写。
+    """身份与会话由调用方提供、经工具闭包固定，不让模型填写。
 
-    调用时 config.configurable.thread_id 应与 conversation_id 一致。
-    若要提交退款，该会话必须已存在于 MySQL，且属于当前用户。
+    config.configurable.thread_id 应与 conversation_id 一致；
+    提交退款的会话必须已存在于 MySQL 且属于当前用户。
     """
     from supportflow.agents.llm import chat_model
 
-    # 这些工具闭包共享一个 AsyncSession。ToolNode 可能并发调度同一条
-    # AIMessage 中的多个工具，因此在实际执行处串行化，不能仅靠提示词约束。
-    # 锁属于本次构建的 Agent，不让不同请求的独立数据库会话相互等待。
+    # ToolNode 会并发调度同一条消息里的多个工具，需在真正执行处串行化（不能靠提示词约束）。
+    # 锁只属于本次构建的 Agent，避免不同请求的独立数据库会话互相等待。
     db_tool_lock = asyncio.Lock()
 
     @wrap_tool_call

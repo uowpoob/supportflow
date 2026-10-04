@@ -25,7 +25,7 @@ const orderNo = String(route.params.orderNo ?? '')
     back-label="返回订单列表"
     :omit-keys="OMIT_KEYS"
   >
-    来自 <code>GET /api/admin/orders/{{ orderNo }}</code>，含商品明细与实付金额。
+    核对这一单的商品明细与实付金额，作为审批退款的依据。
 
     <!-- React 版这里是 `renderExtra(data)` 函数；Vue 用作用域插槽，
          `data` 从槽的 props 里拿。 -->

@@ -54,11 +54,8 @@ const deadline = computed(() => eligibility.value?.window_ends_at ?? null)
           </template>
         </p>
 
-        <p v-else class="verdict__detail">
-          <template v-if="deadline">
-            该订单的退款窗口是签收后 14 天内（截止 {{ formatDateTime(deadline) }}）。
-          </template>
-          判定依据：<code>{{ eligibility.reason_code }}</code>
+        <p v-else-if="deadline" class="verdict__detail">
+          该订单的退款窗口是签收后 14 天内（截止 {{ formatDateTime(deadline) }}）。
         </p>
 
         <p v-if="eligibility.existing_request_key" class="verdict__detail">

@@ -39,7 +39,6 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 全部订单 —— GET /admin/orders -->
   <ResourceListPage
     title="订单"
     :fetcher="fetchOrders"
@@ -47,11 +46,10 @@ const COLUMNS: Column[] = [
     detail-key="order_no"
     :detail-to="(orderNo: string) => `/admin/orders/${orderNo}`"
   >
-    来自 <code>GET /api/admin/orders?offset=&amp;limit=</code>
-    ，含全部客户的订单。点「查看」进入详情核对退款依据。
+    全部客户的订单。点「查看」进入详情核对退款依据。
 
     <template #empty-hint>
-      orders 表还没有数据，先跑 <code>python -m supportflow.db.seed_orders</code>。
+      暂时没有订单记录。
     </template>
   </ResourceListPage>
 </template>

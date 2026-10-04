@@ -21,20 +21,17 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 审批记录（审计用）—— GET /admin/refund-approvals -->
   <ResourceListPage
     title="审批记录"
     :fetcher="fetchRefundApprovals"
     :columns="COLUMNS"
   >
-    来自 <code>GET /api/admin/refund-approvals?offset=&amp;limit=</code>
-    ：每一次批准 / 拒绝留下的凭据，包含"是谁批的"。
+    每一次批准或拒绝留下的记录，包含处理人和审批意见。
 
     <template #notice>
       <StubNotice>
-        这张表<strong>一个申请只有一行</strong>（<code>refund_request_id</code> 是
-        <code>unique</code>），所以只有被决策过的申请才会出现在这里 ——
-        待办申请请去「退款审批」页看。
+        每条申请只有一条审批记录，所以只有被处理过的申请会出现在这里。
+        待处理的申请请到「退款审批」查看。
       </StubNotice>
     </template>
 

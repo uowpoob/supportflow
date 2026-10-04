@@ -45,7 +45,6 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 退款申请队列 —— GET /admin/refund-requests?status=… -->
   <ResourceListPage
     :key="status"
     title="退款审批"
@@ -56,8 +55,7 @@ const COLUMNS: Column[] = [
     :detail-to="(requestKey: string) => `/admin/refunds/${requestKey}`"
     detail-label="审批"
   >
-    来自 <code>GET /api/admin/refund-requests?status=…</code> ——
-    管理员的待办入口，默认只看 <code>status='pending'</code>。
+    待处理的退款申请，默认只看待审批的，可以切换查看其他状态。
 
     <template #notice>
       <div class="field filter-field">
@@ -69,10 +67,8 @@ const COLUMNS: Column[] = [
         </select>
       </div>
       <StubNotice>
-        这里查的是<strong>客户的申请</strong>（<code>refund_requests</code>），
-        不是审批记录（<code>refund_approvals</code>）—— 批准之前后者根本没有对应行，
-        拿它当待办列表用会永远查出空数组。
-        切换筛选条件会重新挂载列表，页码自动回到第一页。
+        这里列出的是客户提交的退款申请。只有被处理过的申请才会出现在「审批记录」里，
+        切换筛选条件会回到第一页。
       </StubNotice>
     </template>
 

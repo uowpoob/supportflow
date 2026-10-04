@@ -103,10 +103,6 @@ async function handleSubmit() {
       <button type="submit" class="btn btn--primary btn--block" :disabled="submitting">
         {{ submitting ? '登录中…' : '登录' }}
       </button>
-
-      <p class="login-card__hint">
-        演示账号：<code>admin / 123456</code>（管理员）；客户账号 <code>customer1</code>、<code>customer2</code>
-      </p>
     </form>
   </div>
 </template>

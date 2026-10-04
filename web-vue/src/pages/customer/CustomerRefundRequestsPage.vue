@@ -31,7 +31,6 @@ const COLUMNS: Column[] = [
 </script>
 
 <template>
-  <!-- 我的退款申请 —— GET /customer/refund-requests -->
   <ResourceListPage
     title="我的退款申请"
     :fetcher="fetchMyRefundRequests"
@@ -39,8 +38,7 @@ const COLUMNS: Column[] = [
     detail-key="request_key"
     :detail-to="(requestKey: string) => `/customer/refund-requests/${requestKey}`"
   >
-    来自 <code>GET /api/customer/refund-requests?offset=&amp;limit=</code>
-    ，只返回本人的申请。点「查看」看单条申请的进度、审批意见和退款结果。
+    你提交过的退款申请。点「查看」可以看到处理进度、审批意见和退款结果。
 
     <template #empty-hint>
       还没有提交过退款申请。到「我的订单」里打开一单已签收的订单，就能看到申请入口。

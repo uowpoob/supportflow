@@ -1,12 +1,5 @@
-"""退款领域的**类型与不变量**：常量、判定结果。
+"""退款领域的：常量、判定结果。
 
-这里没有任何函数逻辑，只有"长什么样"。分出来的理由很实际：
-`schemas/refunds/` 要用 `Eligibility` 把 ORM 翻成响应，如果它住在 `eligibility.py` 里，
-schema 层就得为了拿一个类型去 import 业务逻辑模块 —— 类型不该跟行为绑在一起。
-
-`RefundRequestRow` / `RefundRequestView` 已经搬到 `repository/refund/types.py`
-（它们描述的是"查询返回什么"，属于数据访问层）。这里重新导出一遍，
-`from supportflow.services.refunds.types import RefundRequestView` 这种老写法照旧可用。
 """
 
 from dataclasses import dataclass
@@ -20,13 +13,8 @@ from supportflow.repository.refund.types import RefundRequestRow, RefundRequestV
 REFUND_WINDOW_DAYS = 14
 REFUND_WINDOW = timedelta(days=REFUND_WINDOW_DAYS)
 
-# "占用订单退款名额"的状态。
-# ⚠️ 必须与 `RefundRequest.active_order_id` 那个生成列里的 CASE 逐字一致 ——
-# 那是数据库级的并发防线（唯一约束），这里是应用层的判据。两边不一致就会出现
-# "应用层说没有有效申请、数据库却拒绝插入"的怪现象。改这里要一起写迁移。
-#
-# 由调用方传给 `repository/refund/eligibility.py::find_request_in_statuses` ——
-# 数据访问层不认识"什么算占名额"，那是规则，住在这一层。
+# ⚠️ "占用订单退款名额"的状态：必须与 `RefundRequest.active_order_id` 生成列的 CASE 逐字一致
+# （数据库唯一约束防线 vs 应用层判据）；两边不一致会出现"应用层放行、数据库却拒绝插入"，改这里要同步写迁移。
 ACTIVE_REQUEST_STATUSES: tuple[RefundStatus, ...] = (
     RefundStatus.PENDING,
     RefundStatus.APPROVED,

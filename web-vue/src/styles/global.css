@@ -1,7 +1,7 @@
 :root {
-  --bg: #f5f6f8;
+  --bg: #f4f6f9;
   --surface: #ffffff;
-  --border: #e3e6ea;
+  --border: #e4e8ee;
   --text: #1f2328;
   --text-muted: #6b7280;
   --primary: #2563eb;
@@ -13,7 +13,13 @@
   --info: #1d4ed8;
   --info-bg: #eff6ff;
   --radius: 10px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+  /* 卡片比按钮圆一点：按钮小，大圆角显笨；面板大，直角显硬。 */
+  --radius-card: 14px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-hover: 0 6px 18px rgba(16, 24, 40, 0.10);
+  /* 内容区的总宽度：顶栏和正文共用同一个值，两边的左右边缘才对得齐。
+     想再宽/再窄只改这一处。 */
+  --page-max: 1440px;
 }
 
 * {
@@ -28,11 +34,53 @@ body,
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* 底层铺几团很大很淡的光晕：整站有了明暗层次，但不影响任何文字的可读性。
+     `fixed` 是必须的 —— 否则滚到底部时渐变跟着停，底下就变成一片死灰。 */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(900px 420px at 8% -6%, rgba(37, 99, 235, 0.09), transparent 62%),
+    radial-gradient(760px 380px at 92% 2%, rgba(139, 92, 246, 0.08), transparent 62%),
+    radial-gradient(800px 420px at 50% 0%, rgba(14, 165, 233, 0.06), transparent 60%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 细滚动条：默认那条又宽又灰，在浅色界面上很抢眼 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd2d9 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  /* content-box 下才留得出"悬浮"的间隙：实心的宽滚动条看着笨重 */
+  background-clip: content-box;
+  background-color: #cbd2d9;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #aab2bd;
+}
+
+/* 键盘 Tab 走到哪要有记号；鼠标点了不要留一圈难看的蓝边 */
+:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
 }
 
 code {
@@ -53,7 +101,7 @@ code {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
 }
 
@@ -65,7 +113,7 @@ code {
   color: var(--text);
   font-size: 14px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
 
 .btn:disabled {
@@ -73,13 +121,19 @@ code {
   cursor: not-allowed;
 }
 
+/* 按下去轻微下沉，让"点了生效了"有反馈 */
+.btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
 .btn--primary {
-  background: var(--primary);
+  background: linear-gradient(180deg, #3b82f6, var(--primary));
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.35);
   color: #fff;
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--primary-dark);
+  background: linear-gradient(180deg, var(--primary), var(--primary-dark));
 }
 
 .btn--ghost {
@@ -88,11 +142,23 @@ code {
 }
 
 .btn--ghost:hover {
+  background: #f6f8fa;
+  border-color: #cfd6de;
   color: var(--text);
 }
 
 .btn--block {
   width: 100%;
+}
+
+/* 带图标的按钮：图标和文字并排时注意两点 ——
+   `inline-flex` 让它们水平排列，`gap` 比给文字加 margin 省心，
+   `align-items: center` 负责把 svg 和汉字的中线对齐。 */
+.btn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .alert {
@@ -136,15 +202,6 @@ code {
   font-size: 12.5px;
 }
 
-.plain-list {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.plain-list li + li {
-  margin-top: 6px;
-}
-
 .stack > * + * {
   margin-top: 16px;
 }
@@ -157,22 +214,26 @@ code {
   justify-content: center;
   min-height: 100%;
   padding: 24px;
+  /* 中间亮、四周略暗，登录卡片看起来浮在页面上 */
+  background: radial-gradient(120% 80% at 50% 0%, #ffffff 0%, var(--bg) 60%);
 }
 
 .login-card {
   width: 100%;
-  max-width: 360px;
-  padding: 28px 26px;
+  max-width: 400px;
+  padding: 32px 30px;
+  border-radius: var(--radius-card);
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.08);
 }
 
 .login-card__head {
   text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .login-card__title {
   margin: 10px 0 2px;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .login-card__subtitle {
@@ -181,11 +242,18 @@ code {
   font-size: 13px;
 }
 
-.login-card__hint {
-  margin: 16px 0 0;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  text-align: center;
+/* 登录页那个 logo 复用顶栏的样式，但它是页面主角，放大一档 */
+.login-card__head .topbar__logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+
+.login-card .btn--block {
+  margin-top: 6px;
+  padding: 10px 16px;
+  font-size: 14.5px;
 }
 
 .login-card > .alert {
@@ -228,30 +296,46 @@ code {
   min-height: 100%;
 }
 
+/* 吸顶：内容再长，导航和「退出」永远在上面，不用滚回顶部。
+   z-index 要比下面的卡片高，否则滚动时卡片会盖在顶栏上。 */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  height: 60px;
+  padding: 0 24px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 顶栏内容走和正文一样的总宽度 —— 商标、右上角的用户名跟下面的卡片左右对齐，
+   一眼看过去是一整块。边框仍然横贯整屏：它是整个外框的边线，不该跟着内容缩。 */
+.topbar__inner {
   display: flex;
   align-items: center;
-  gap: 24px;
-  height: 56px;
-  padding: 0 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  gap: 28px;
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
 }
 
 .topbar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .topbar__logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--primary);
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #3b82f6, var(--primary-dark));
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -259,7 +343,9 @@ code {
 }
 
 .topbar__title {
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 .topbar__nav {
@@ -269,16 +355,34 @@ code {
 }
 
 .navlink {
-  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
   border-radius: 8px;
   color: var(--text-muted);
   text-decoration: none;
   font-size: 13.5px;
+  transition: background 0.15s, color 0.15s;
+}
+
+/* 图标比文字淡一点：视线先落在菜单名上，图标只当路标。
+   选中态（`.navlink--active`）会重新点亮 —— 参见下面那条颜色继承规则。 */
+.navlink .icon {
+  opacity: 0.75;
 }
 
 .navlink:hover {
   background: #f0f2f5;
   color: var(--text);
+}
+
+.navlink:hover .icon {
+  opacity: 1;
+}
+
+.navlink--active .icon {
+  opacity: 1;
 }
 
 .navlink--active {
@@ -305,24 +409,45 @@ code {
 }
 
 .userchip__role {
-  padding: 1px 7px;
-  border: 1px solid var(--border);
+  padding: 1px 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--text-muted);
   font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* 角色一眼分得清：客户蓝、管理员紫 */
+.userchip__role--customer {
+  background: var(--info-bg);
+  border-color: #cfe0fd;
+  color: var(--info);
+}
+
+.userchip__role--admin {
+  background: #f3ecfe;
+  border-color: #e3d4fb;
+  color: #6d32c9;
 }
 
 .page {
   flex: 1;
   width: 100%;
-  max-width: 1080px;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 24px 20px 40px;
+  padding: 26px 24px 56px;
+}
+
+/* 标题块自带下间距和一条分隔线，卡片区和标题不会糊在一起 */
+.page-head {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
 }
 
 .page-head__title {
-  margin: 0 0 4px;
-  font-size: 18px;
+  margin: 0 0 5px;
+  font-size: 20px;
+  letter-spacing: 0.2px;
 }
 
 .page-head__desc {
@@ -335,34 +460,62 @@ code {
 
 .chat-layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 16px;
-  min-height: 420px;
+  /* grid 项默认 stretch：左右两个框子的**下边缘自动齐平**。
+     左栏内容再少也不会出现"框子比右边短一截" —— 这就是"底部对齐"的由来，
+     别改成 `align-items: start`，那样左栏会缩成一小块。 */
+  align-items: stretch;
+  /* 显式给高度是必要的：高度由"内容多高"决定时，里面的 `flex: 1` 没有参照，
+     消息一多整页就被拉长、滚动条跑到浏览器上。
+     跟视口走（留 190px 给顶栏和页内边距），上下用 clamp 兜住矮屏幕和超宽屏。 */
+  height: clamp(520px, calc(100vh - 190px), 900px);
 }
 
 .chat-layout__side,
 .chat-layout__main {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
 }
 
+/* 标题 + 右侧操作（「+ 新建」）排一行 */
 .side-head {
-  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px;
+  background: linear-gradient(180deg, #f8fafd, #fbfcfd);
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   font-size: 13.5px;
 }
 
-/* 标题 + 右侧操作（「+ 新建」）排一行 */
-.side-head--row {
-  display: flex;
+/* 「icon + 会话」：图标用主色灰蓝，标题用正文色，主次分明 */
+.side-head__label {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 7px;
+}
+
+.side-head__label .icon {
+  color: var(--primary);
+  opacity: 0.85;
+}
+
+/* 左栏还没内容时的提示：还没有会话 / 列表加载失败 */
+.side-empty {
+  padding: 20px 14px;
+  text-align: center;
+}
+
+.side-empty p {
+  margin: 0;
 }
 
 /* 面板里的"加载中"这类单行内容需要自己撑点内边距 */
@@ -371,15 +524,6 @@ code {
 }
 
 .pane-pad > .muted {
-  margin: 0;
-}
-
-.side-empty {
-  padding: 20px 14px;
-  text-align: center;
-}
-
-.side-empty p {
   margin: 0;
 }
 
@@ -392,6 +536,20 @@ code {
   gap: 6px;
   padding: 32px 20px;
   text-align: center;
+}
+
+/* 圆形浅蓝底 + 图标：空状态不再是干巴巴两行字 */
+.chat-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--info-bg);
+  color: var(--primary);
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.05);
 }
 
 .chat-empty__title {
@@ -407,68 +565,115 @@ code {
   display: flex;
   gap: 10px;
   padding: 14px;
+  background: #fbfcfd;
   border-top: 1px solid var(--border);
 }
 
 .composer__input {
   flex: 1;
-  padding: 9px 12px;
+  padding: 10px 13px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #f9fafb;
+  border-radius: 10px;
+  background: #fff;
   font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.composer__input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 /* ---------- 管理端 ---------- */
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
 }
 
 .entry-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 18px;
+  gap: 6px;
+  padding: 20px;
   background: var(--surface);
+  /* 顶部一条彩色描边：一眼分得清哪块是哪块，比整块上色克制得多 */
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-top: 3px solid var(--accent-fg, var(--primary));
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s, transform 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
 .entry-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
+  border-color: var(--accent-fg, var(--primary));
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* 彩色圆角方块 + 里面的白色图标 = 这块卡片是干什么的，不用读标题就知道。
+   颜色走两个变量（底色 / 图标色），下面每种配色只改这两个值。 */
+.entry-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 4px;
+  border-radius: 11px;
+  background: var(--accent-bg, var(--info-bg));
+  color: var(--accent-fg, var(--primary));
+  transition: transform 0.15s;
+}
+
+.entry-card:hover .entry-card__icon {
+  transform: scale(1.06);
+}
+
+/* 每种配色成对给出：淡底 + 饱和的前景色。
+   淡到极致才敢铺这么大一块面积 —— 配色语义也没跑到常识之外
+   （蓝=常规、绿=钱、紫=凭据、玫红=待办要处理、琥珀=个人事项）。 */
+.entry-card--blue {
+  --accent-bg: #e8f0ff;
+  --accent-fg: #2563eb;
+}
+
+.entry-card--emerald {
+  --accent-bg: #e6f7f0;
+  --accent-fg: #0f8a63;
+}
+
+.entry-card--violet {
+  --accent-bg: #f0eafe;
+  --accent-fg: #7c4ddb;
+}
+
+.entry-card--amber {
+  --accent-bg: #fdf1dc;
+  --accent-fg: #b5730c;
+}
+
+.entry-card--rose {
+  --accent-bg: #fdeaef;
+  --accent-fg: #d03b60;
 }
 
 .entry-card__title {
+  font-size: 15px;
   font-weight: 600;
 }
 
 .entry-card__desc {
   color: var(--text-muted);
   font-size: 12.5px;
+  line-height: 1.6;
 }
 
-/* ---------- 占位与状态页 ---------- */
-
-.placeholder {
-  padding: 16px 18px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  background: #fbfcfd;
-}
-
-.placeholder__title {
-  margin: 0 0 6px;
-  font-size: 14px;
-  color: var(--text-muted);
-}
+/* ---------- 状态页 ---------- */
 
 .center-page {
   display: flex;
@@ -502,7 +707,7 @@ code {
   overflow-x: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
 }
 
@@ -514,25 +719,30 @@ code {
 
 .table th,
 .table td {
-  padding: 9px 12px;
+  padding: 11px 16px;
   text-align: left;
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
 }
 
 .table th {
-  background: #f8fafc;
+  background: #f7f9fc;
   color: var(--text-muted);
   font-weight: 600;
   font-size: 12.5px;
+  letter-spacing: 0.3px;
 }
 
 .table tbody tr:last-child td {
   border-bottom: none;
 }
 
+.table tbody tr {
+  transition: background 0.12s;
+}
+
 .table tbody tr:hover {
-  background: #f9fbfd;
+  background: #f6f9ff;
 }
 
 .link {
@@ -549,6 +759,7 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 0 2px;
 }
 
 .pager__actions {
@@ -557,16 +768,29 @@ code {
 }
 
 .btn--sm {
-  padding: 4px 10px;
+  padding: 5px 12px;
   font-size: 12.5px;
 }
 
 .empty-state {
-  padding: 28px 20px;
+  padding: 36px 20px;
   text-align: center;
-  background: #fbfcfd;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px dashed #cdd4dc;
+  border-radius: var(--radius-card);
+}
+
+/* 空状态里的箱子图标：淡底色的一枚圆角方块，跟聊天空状态那个圆圈区分开 */
+.empty-state__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 8px;
+  border-radius: 13px;
+  background: #f1f4f8;
+  color: #94a1b2;
 }
 
 .empty-state__title {
@@ -587,7 +811,7 @@ code {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
 }
 
@@ -595,8 +819,12 @@ code {
   display: grid;
   grid-template-columns: 200px 1fr;
   gap: 12px;
-  padding: 9px 14px;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.kv__row:hover {
+  background: #fafbfd;
 }
 
 .kv__row:last-child {
@@ -615,7 +843,9 @@ code {
 
 .section__title {
   margin: 0 0 10px;
-  font-size: 15px;
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 .crumbs {
@@ -638,29 +868,25 @@ code {
   gap: 12px;
 }
 
-/* ---------- 原始返回折叠块 ---------- */
-
-.raw {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.raw__summary {
-  padding: 8px 14px;
-  color: var(--text-muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.raw .codeblock {
-  border: none;
-  border-top: 1px solid var(--border);
-  border-radius: 0;
-}
-
 /* ---------- 侧栏会话列表 ---------- */
 
+/* 会话列表的独立滚动容器。
+   它自己有边框、有底色 —— 看得出来是一个单独的盒子；会话攒多了只在这个盒子里面上下拖，
+   不牵动整个页面。
+   `flex: 1` 让它吃满左栏剩下的高度（和右栏的输入框在同一条底线上，不会留出空白），
+   `min-height: 0` 是配套的：flex 子项默认 `min-height: auto`，
+   内容比容器高时它不肯压缩，滚动条根本出不来。 */
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  margin: 12px 14px 14px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fbfcfd;
+}
+
+/* 列表本身不滚 —— 滚动交给上面那个 `.side-scroll` 盒子。 */
 .side-list {
   margin: 0;
   padding: 0;
@@ -688,20 +914,25 @@ code {
   gap: 2px;
   width: 100%;
   padding: 10px 14px;
+  /* 左边留一根 3px 的透明边：选中时染成蓝色。
+     不用 box-shadow/额外元素，状态切换就不会引起宽度抖动。 */
   border: none;
+  border-left: 3px solid transparent;
   background: none;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .side-list__btn:hover:not(:disabled) {
-  background: #f6f7f9;
+  background: #f4f6f9;
 }
 
 /* 正看着的那个会话要和别的区分开，否则切来切去不知道自己在哪一条 */
 .side-list__btn--active {
+  border-left-color: var(--primary);
   background: var(--info-bg);
   color: var(--info);
 }
@@ -745,16 +976,18 @@ code {
 /* ---------- 对话区 ---------- */
 
 /* 消息流自己滚，输入框固定在下边。
-   `max-height` 是必须的：没有它内容一多整页就被拉长，滚动条会跑到浏览器上，
-   输入框跟着被顶出屏幕。 */
+   高度由外框给（`.chat-layout` 的高度 + 这里的 `flex: 1`）；
+   `min-height: 0` 不能省 —— 没有它内容会把自身撑大，`overflow-y` 白写，
+   整页被拉长、滚动条跑到浏览器上，输入框跟着被顶出屏幕。 */
 .chat-thread {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
-  max-height: 520px;
-  padding: 16px;
+  gap: 12px;
+  min-height: 0;
+  padding: 18px;
   overflow-y: auto;
+  background: linear-gradient(180deg, #fbfcfe, #ffffff);
 }
 
 .chat-thread__hint {
@@ -776,23 +1009,29 @@ code {
 
 .bubble {
   max-width: 78%;
-  padding: 9px 12px;
-  border-radius: 12px;
+  padding: 10px 13px;
+  border-radius: 14px;
   font-size: 13.5px;
+  line-height: 1.7;
   /* 助手回答里带换行，默认会压成一行 —— 必须保留，否则整段挤成一块 */
   white-space: pre-wrap;
   word-break: break-word;
 }
 
+/* 用户的话：实心蓝、右下角收成小尖，方向感更强 */
 .bubble--user {
-  border-bottom-right-radius: 4px;
-  background: var(--primary);
+  border-bottom-right-radius: 5px;
+  background: linear-gradient(135deg, #3b82f6, var(--primary-dark));
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
   color: #fff;
 }
 
+/* 助手的话：白底描边而非灰块，跟右侧聊天气泡区（浅底色）拉开层次 */
 .bubble--assistant {
-  border-bottom-left-radius: 4px;
-  background: #f1f3f5;
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 5px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
   color: var(--text);
 }
 
@@ -803,7 +1042,8 @@ code {
 
 /* 本轮的检索依据：贴在消息流下面，输入框上面 */
 .evidence {
-  padding: 10px 14px;
+  padding: 11px 16px;
+  background: #fbfcfd;
   border-top: 1px solid var(--border);
   font-size: 12.5px;
 }
@@ -814,6 +1054,7 @@ code {
   align-items: center;
   gap: 8px;
   margin: 0;
+  font-weight: 600;
 }
 
 .evidence__list {

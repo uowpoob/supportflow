@@ -46,8 +46,7 @@ def build_refund_tools(db : AsyncSession,user_id:int,conversation_id : str)->lis
         "哪些还在处理中"。status 可以不传，不传就是全部；
         传的话只能是 pending（待审批）/ approved（已批准）/ rejected（已拒绝）/ refunded（已退款）。
         不需要用户 ID —— 只会返回当前登录用户自己的申请。"""
-        # 跟 list_my_orders 一样给 50：模型看不到的那几条，它会当成"不存在"，
-        # 而且它没有翻页的能力。
+        # 同 list_my_orders：模型无翻页能力，看不到的会被当成"不存在"。
         rows, total = await refund_service.list_refund_requests_for_user(
             db, user_id, offset=0, limit=50, status=status
         )

@@ -71,7 +71,7 @@ async def resolve_session(
 
     return user
 
-#删除会话
+
 async def revoke_session(
     db: AsyncSession,
     token: str,

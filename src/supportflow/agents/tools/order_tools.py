@@ -67,8 +67,7 @@ def build_order_tools(db: AsyncSession, user_id: int) -> list:
         """当用户想知道自己有哪些订单时调用，比如"我都有啥订单""我买了什么"
         "我的订单列表"。不需要任何参数 —— 只会返回当前登录用户自己的订单，
         不含其他客户的数据。"""
-        # limit 故意给 50 而不是 10：客户订单常有十几笔，少给的那几笔
-        # 模型**根本看不见**（它会从单号断档去猜），而它没有翻页的能力。
+        # limit 给 50：模型没有翻页能力，少给的那几笔它会当成"不存在"。
         orders, total = await order_service.list_orders_for_user(
             db, user_id, offset=0 , limit=50
         )
