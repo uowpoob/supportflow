@@ -282,6 +282,8 @@ export interface MessageTurn {
   pending_request_key: string | null
   retrieval_status: RetrievalStatus
   retrieved_sources: RetrievedSource[]
+  /** 首轮后自动生成的标题；非首轮或生成失败时为 null */
+  title?: string | null
 }
 
 /** 对齐后端 `schemas/conversations.py::MessageCreate` —— 只提交这一句话 */

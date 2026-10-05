@@ -102,27 +102,4 @@ async def retrieve_hybrid(
         return fused[:top_k]
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="向量与 BM25 双路召回，按 RRF 融合排序")
-    parser.add_argument("query", help="要检索的问题")
-    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
-    parser.add_argument("--candidate-k", type=int, default=DEFAULT_CANDIDATE_K)
-    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K)
-    parser.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help="仅用于向量 COSINE 门槛")
-    parser.add_argument("--rerank", action="store_true", help="融合后调重排模型，再截取 top-k")
-    parser.add_argument("--category", choices=["data", "policies"])
-    parser.add_argument("--document-id", action="append", dest="document_ids")
-    args = parser.parse_args()
-    try:
-        chunks = asyncio.run(retrieve_hybrid(
-            args.query, top_k=args.top_k, candidate_k=args.candidate_k, rrf_k=args.rrf_k,
-            min_score=args.min_score, rerank=args.rerank,
-            category=args.category, document_ids=args.document_ids,
-        ))
-    except (ValueError, RetrievalUnavailable) as exc:
-        parser.exit(status=1, message=f"{exc}\n")
-    print(json.dumps({"query": args.query, "count": len(chunks), "chunks": chunks}, ensure_ascii=False, indent=2))
 
-
-if __name__ == "__main__":
-    main()

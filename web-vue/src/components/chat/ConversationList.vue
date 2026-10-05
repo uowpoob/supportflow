@@ -44,7 +44,7 @@ function timeLabel(value: string): string {
   <div class="side-scroll">
     <div v-if="items.length === 0" class="side-empty">
       <p>还没有会话</p>
-      <p class="muted">点上面的「+ 新建」开一个，然后在右边提问。</p>
+      <p class="muted">在右边输入你的问题，发送后会自动开一个。</p>
     </div>
 
     <ul v-else class="side-list">

@@ -130,23 +130,3 @@ async def retrieve(
         raise RetrievalUnavailable(f"知识检索暂不可用（{type(exc).__name__}）") from exc
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="从已有 Milvus 知识库召回相关片段，不生成回答")
-    parser.add_argument("query", help="要检索的问题")
-    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
-    parser.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE)
-    parser.add_argument("--category", choices=["data", "policies"])
-    parser.add_argument("--document-id", action="append", dest="document_ids", help="限定文档，可重复传入")
-    args = parser.parse_args()
-    try:
-        chunks = asyncio.run(retrieve(
-            args.query, top_k=args.top_k, min_score=args.min_score,
-            category=args.category, document_ids=args.document_ids,
-        ))
-    except (ValueError, RetrievalUnavailable) as exc:
-        parser.exit(status=1, message=f"{exc}\n")
-    print(json.dumps({"query": args.query, "count": len(chunks), "chunks": chunks}, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

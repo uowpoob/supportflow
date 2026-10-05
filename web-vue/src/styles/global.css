@@ -483,7 +483,7 @@ code {
   box-shadow: var(--shadow);
 }
 
-/* 标题 + 右侧操作（「+ 新建」）排一行 */
+/* 左栏顶部那条标题 */
 .side-head {
   display: flex;
   align-items: center;

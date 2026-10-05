@@ -124,21 +124,4 @@ async def retrieve_bm25(
         raise RetrievalUnavailable(f"BM25 检索暂不可用（{type(exc).__name__}）") from exc
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="从本地知识文档召回 BM25 候选，不生成回答")
-    parser.add_argument("query", help="要检索的问题")
-    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
-    parser.add_argument("--category", choices=["data", "policies"])
-    parser.add_argument("--document-id", action="append", dest="document_ids")
-    args = parser.parse_args()
-    try:
-        chunks = asyncio.run(retrieve_bm25(
-            args.query, top_k=args.top_k, category=args.category, document_ids=args.document_ids,
-        ))
-    except (ValueError, RetrievalUnavailable) as exc:
-        parser.exit(status=1, message=f"{exc}\n")
-    print(json.dumps({"query": args.query, "count": len(chunks), "chunks": chunks}, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+d

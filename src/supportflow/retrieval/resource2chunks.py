@@ -52,7 +52,7 @@ def load_documents(directories: tuple[Path, ...] = DOCUMENT_DIRS) -> list[Docume
 
 
 def split_documents(documents: list[Document]) -> list[Document]:
-    """一条款对应一个片段；文前说明保留为概述，标题随片段进入向量化文本。"""
+    """一个条款对应一个片段；文前说明保留为概述，标题随片段进入向量化文本。"""
     chunks: list[Document] = []
     chunk_ids: set[str] = set()
 

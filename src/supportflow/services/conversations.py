@@ -4,12 +4,13 @@ import logging
 from collections.abc import AsyncIterator, Sequence
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.agents.graph.context import SupportContext
+from supportflow.agents.llm import chat_model
 from supportflow.agents.graph.state import SupportState
 from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
@@ -68,7 +69,9 @@ def _public_messages(messages: Sequence[BaseMessage]) -> list[ChatMessageOut]:
     return visible
 
 
-def _turn_from_state(state: SupportState, conversation_id: str, message_id: str) -> MessageTurnOut:
+def _turn_from_state(
+    state: SupportState, conversation_id: str, message_id: str, title: str | None = None,
+) -> MessageTurnOut:
     """从本轮用户消息开始提取结果，供普通请求和流式请求共用。"""
     history = state["messages"]
     start = next(i for i, item in enumerate(history) if item.id == message_id)
@@ -83,6 +86,7 @@ def _turn_from_state(state: SupportState, conversation_id: str, message_id: str)
             title=item["title"], source=item["source"],
             section=item.get("section"), score=item.get("score"),
         ) for item in state.get("retrieved_documents", [])],
+        title=title,
     )
 
 
@@ -93,6 +97,49 @@ class ConversationChat:
         self.graph = graph
         # 最小的单进程并发保护；多进程锁与请求重试幂等留给运行状态模块。
         self._running: set[str] = set()
+
+    async def _generate_title(self, user_message: str) -> str | None:
+        """用模型把首轮对话概括成一句短标题；失败时返回 None，不影响本轮结果。"""
+        prompt = (
+            "把下面这句售后咨询概括成一个不超过 20 个字的标题，"
+            "直接输出标题本身，不要引号、不要句号、不要额外解释。\n\n"
+            f"客户：{user_message}"
+        )
+        try:
+            response = await chat_model.ainvoke([SystemMessage(content=prompt)])
+        except Exception as exc:
+            logger.warning("生成会话标题失败（%s）", type(exc).__name__)
+            return None
+        title = str(response.content).strip().strip('"').strip("“”").strip()
+        if not title:
+            return None
+        return title[:50]
+
+    async def _maybe_generate_title(
+        self, db: AsyncSession, user_id: int, conversation_id: str, user_message: str,
+        was_empty: bool,
+    ) -> str | None:
+        """首轮结束后自动生成标题；不是首轮或当前标题已被改过时跳过。
+
+        判断依据：本轮开始前 checkpoint 里还没有任何消息（`was_empty`），且 MySQL 里
+        标题仍是默认的「新会话」。这样既能限定在「首轮」，又不会覆盖用户或之前轮次
+        已经生成的标题。
+        """
+        if not was_empty:
+            return None
+        conversation = await conversation_repo.get_conversation_for_user(db, user_id, conversation_id)
+        if conversation is None or conversation.title != "新会话":
+            return None
+        title = await self._generate_title(user_message)
+        if title is None:
+            return None
+        try:
+            await conversation_repo.update_title(db, user_id, conversation_id, title)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            return None
+        return title
 
     async def list_messages(
         self, db: AsyncSession, user_id: int, conversation_id: str, offset: int, limit: int,
@@ -127,6 +174,8 @@ class ConversationChat:
             snapshot = await self.graph.aget_state(config)
             if snapshot.values.get("pending_approval"):
                 raise ConversationError("本会话正在等待管理员审批", status_code=409)
+            # 本轮开始前还没有任何消息 = 这是首轮，结束后值得生成标题。
+            was_empty = not snapshot.values.get("messages")
             # 收到新消息即更新最近活动时间，并在等待模型前结束这段 MySQL 事务。
             await conversation_repo.touch_conversation(db, user_id, conversation_id)
             await db.commit()
@@ -137,7 +186,8 @@ class ConversationChat:
                     config,
                     context=SupportContext(user_id, conversation_id, db),
                 )
-                return _turn_from_state(state, conversation_id, message.id)
+                title = await self._maybe_generate_title(db, user_id, conversation_id, content, was_empty)
+                return _turn_from_state(state, conversation_id, message.id, title)
             except Exception as exc:
                 # 不自动重跑：此前的工具可能已经提交了业务写入。
                 logger.warning("对话执行失败（%s）", type(exc).__name__)
@@ -173,6 +223,8 @@ class ConversationChat:
             snapshot = await self.graph.aget_state(config)
             if snapshot.values.get("pending_approval"):
                 raise ConversationError("本会话正在等待管理员审批", status_code=409)
+            # 本轮开始前还没有任何消息 = 这是首轮，结束后值得生成标题。
+            was_empty = not snapshot.values.get("messages")
             await conversation_repo.touch_conversation(db, user_id, conversation_id)
             await db.commit()
 
@@ -200,7 +252,8 @@ class ConversationChat:
                     # 客户端断开时立刻关闭图流，不再继续读取后续模型/工具事件。
                     await graph_stream.aclose()
                 snapshot = await self.graph.aget_state(config)
-                yield _turn_from_state(snapshot.values, conversation_id, message.id)
+                title = await self._maybe_generate_title(db, user_id, conversation_id, content, was_empty)
+                yield _turn_from_state(snapshot.values, conversation_id, message.id, title)
             except Exception as exc:
                 # 工具可能已经写库；失败时不自动重新执行本轮。
                 logger.warning("流式对话执行失败（%s）", type(exc).__name__)

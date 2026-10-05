@@ -66,3 +66,20 @@ async def touch_conversation(
         )
         .values(updated_at=utc_now())
     )
+
+
+async def update_title(
+    db: AsyncSession,
+    user_id: int,
+    conversation_id: str,
+    title: str,
+) -> None:
+    """更新当前用户会话的标题，不提交事务。"""
+    await db.execute(
+        update(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == user_id,
+        )
+        .values(title=title)
+    )

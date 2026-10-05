@@ -65,6 +65,12 @@ const sendError = ref('')
 const turnStatus = ref<RetrievalStatus | null>(null)
 const turnSources = ref<RetrievedSource[]>([])
 
+/**
+ * 正在建会话。
+ *
+ * 只有一种情况会为真：还没选中任何会话时发出第一句话，`send` 先去建一个空会话
+ * （见 `send` 里那段）。这期间发送按钮显示「创建中…」。
+ */
 const creating = ref(false)
 
 /**
@@ -192,9 +198,21 @@ function applyServerStatus(page: ConversationMessages | null): void {
   startWaiting(page.pending_request_key)
 }
 
-// 切换会话先把上一轮的遗留清干净：否则新会话还没加载出来的那段时间，
-// 屏幕上挂的还是上一个会话的对话或半截流式文字。
-watch(selectedId, () => {
+/**
+ * 切到另一条会话之前，先把上一条留在屏幕上的东西清干净。
+ *
+ * 不清的话，新会话还没加载出来的那段时间，屏幕上挂的还是上一个会话的对话
+ * 或者半截流式文字。
+ *
+ * ⚠️ **只有"用户点了左边列表"才调它**（见 `selectConversation`），
+ * 千万别挂回 `watch(selectedId)`：没选会话时发第一句话会先建一个新会话、
+ * 把 `selectedId` 从 null 改成它的 id，那一刻根本没有"上一轮的遗留"要清，
+ * 而清理第一步的 `cancelStream()` 会把**刚发出去的那一轮**掐死。
+ *
+ * 顺序也有讲究：**先清再改 `selectedId`** —— `stopWaiting` 要拿旧的 id
+ * 才能把列表上那个「等审批」角标销掉。
+ */
+function clearTurnState(): void {
   cancelStream()
   messages.value = []
   optimistic.value = ''
@@ -207,7 +225,7 @@ watch(selectedId, () => {
   // 所以这里可以放心清掉，不会丢信息。
   stopWaiting()
   stopRunningElsewhere()
-})
+}
 
 /** 掐掉正在读的那条流；没有在跑就什么也不做。 */
 function cancelStream(): void {
@@ -228,15 +246,28 @@ onUnmounted(() => {
 
 // ------------------------- 发送 -------------------------
 
+/**
+ * 能不能点发送。
+ *
+ * ⚠️ **不需要先选中会话**：没选就是"还没有会话"，发送时会先自动建一个再发
+ * （见 `send`）。所以这里只看这句话能不能发，不看会话有没有。
+ */
 const canSend = computed(
   () =>
-    selectedId.value !== null
-    && draft.value.trim() !== ''
+    draft.value.trim() !== ''
     && !sending.value
     // 这两种状态下发出去都只会拿到 409，干脆别让点。
     && !waiting.value
     && !runningElsewhere.value,
 )
+
+/**
+ * 消息区要不要显示"加载中"。
+ *
+ * 正在发消息时**不算**加载：自动建会话那一下会顺带触发一次历史请求（空会话），
+ * 不挡住的话，屏幕上刚出现的对话和刚发出去的那句话会被骨架屏顶掉闪一下。
+ */
+const loadingMessages = computed(() => messageState.value === 'loading' && !sending.value)
 
 /** 输入框里那句提示 —— 锁上时要说明"为什么现在不能发"。 */
 const inputPlaceholder = computed(() => {
@@ -357,6 +388,17 @@ function applyTurn(target: string, turn: MessageTurn): void {
   // ⚠️ 服务端返回的 `messages` **包含刚发的那条用户消息**（`done` 已定稿）：
   // 整段追加即可，不要再把 `content` 单独插一遍，否则你那句话会显示两遍。
   appendMessages(turn.messages)
+  // 首轮后后端生成了标题：立刻反映到左侧列表，别等下一次 reload 才出现。
+  if (turn.title && listPage.value !== null) {
+    const newTitle = turn.title
+    const page = listPage.value
+    listPage.value = {
+      ...page,
+      items: page.items.map((item) =>
+        item.id === target ? { ...item, title: newTitle } : item,
+      ),
+    }
+  }
   // 这一轮是不是把图停在"等管理员审批"了，由后端说了算（`status` 字段）。
   if (turn.status === 'waiting_approval') {
     startWaiting(turn.pending_request_key)
@@ -378,8 +420,9 @@ watch(
 )
 async function send(): Promise<void> {
   const content = draft.value.trim()
-  const target = selectedId.value
-  if (content === '' || target === null || sending.value) return
+  if (content === '' || sending.value || creating.value || waiting.value || runningElsewhere.value) {
+    return
+  }
 
   sending.value = true
   sendError.value = ''
@@ -390,6 +433,19 @@ async function send(): Promise<void> {
   draft.value = ''
 
   try {
+    // 还没选中任何会话 = 这是进来之后的第一句话：先建一个空会话，再把这句发进去。
+    // 界面上没有「+ 新建」按钮，会话就是在这一步悄悄出现的。
+    let target = selectedId.value
+    if (target === null) {
+      creating.value = true
+      const created = await createConversation()
+      target = created.id
+      // 选中新会话：右边会去读它的历史（空的一页，`loadingMessages` 已经挡住了
+      // 那一下的骨架屏），左边列表刷新后它立刻排在最前面。
+      selectedId.value = created.id
+      reloadList()
+      creating.value = false // 建好了，后面就是普通发送，按钮切回「回复中…」
+    }
     await runStream(target, content)
   } catch (err) {
     // AbortError 是我们自己掐的（切会话 / 关页面），不算失败，别弹错误。
@@ -400,6 +456,8 @@ async function send(): Promise<void> {
       failSend(err, content)
     }
   } finally {
+    // 兜底：建会话那一步要是抛了，别让按钮永远卡在「创建中…」。
+    creating.value = false
     optimistic.value = ''
     streamingText.value = ''
     inFlight = null
@@ -449,25 +507,18 @@ async function runStream(target: string, content: string): Promise<void> {
   turnSources.value = turn.retrieved_sources
 }
 
-// ------------------------- 新建与切换 -------------------------
+// ------------------------- 切换会话 -------------------------
+// 新建不在这里 —— 会话是发第一句话时自动建的，见 `send`。
 
-async function startConversation(): Promise<void> {
-  if (creating.value || sending.value) return
-  creating.value = true
-  sendError.value = ''
-  try {
-    const created = await createConversation()
-    // 新会话还没有消息，直接选中它就能接着提问，不用去列表里找。
-    selectedId.value = created.id
-    reloadList()
-  } catch (err) {
-    sendError.value = err instanceof ApiError ? err.message : '新建会话失败'
-  } finally {
-    creating.value = false
-  }
-}
-
+/**
+ * 点左边列表切过去。
+ *
+ * 点已经选中的那一条什么都不做：重来一遍会把屏幕上的对话清掉、再读一次历史，
+ * 白闪一下，什么也没多出来。
+ */
 function selectConversation(id: string): void {
+  if (id === selectedId.value) return
+  clearTurnState()
   selectedId.value = id
 }
 </script>
@@ -494,18 +545,10 @@ function selectConversation(id: string): void {
 
     <div class="chat-layout">
       <aside class="chat-layout__side">
+        <!-- 这里原来有个「+ 新建」按钮，已经去掉了：会话改成"发第一句话时自动建"
+             （见 `send`），用户不用先操心会话从哪来，也就没有"一直点新建"这回事。 -->
         <div class="side-head">
           <span class="side-head__label"><AppIcon name="chat" :size="16" />会话</span>
-          <!-- 一轮没跑完之前不让切走：结果要贴回发起时那个会话，切了就对不上。
-               后端那边同一个会话也会返回 409，这里只是提前避免。 -->
-          <button
-            type="button"
-            class="btn btn--ghost btn--sm"
-            :disabled="creating || sending"
-            @click="startConversation"
-          >
-            {{ creating ? '创建中…' : '+ 新建' }}
-          </button>
         </div>
 
         <div v-if="listState === 'loading'" class="pane-pad">
@@ -528,81 +571,84 @@ function selectConversation(id: string): void {
       </aside>
 
       <section class="chat-layout__main">
+        <!-- 还没选中会话 = 一段还没开始的对话。下面的输入框照常能用：
+             点发送会先自动建一个会话，再把这句发进去（见 `send`）。 -->
         <div v-if="selectedId === null" class="chat-empty">
           <span class="chat-empty__icon"><AppIcon name="chat" :size="26" /></span>
-          <p class="chat-empty__title">选一个会话开始</p>
-          <p class="muted">左边点一个已有的会话，或者点「+ 新建」开一个新的。</p>
+          <p class="chat-empty__title">开始一段新对话</p>
+          <p class="muted">在下面的输入框里提问，发送后会自动为你开一个新会话。</p>
         </div>
 
-        <template v-else>
-          <div v-if="messageState === 'loading'" class="pane-pad">
-            <LoadingLine />
-          </div>
+        <div v-else-if="loadingMessages" class="pane-pad">
+          <LoadingLine />
+        </div>
 
-          <div v-else-if="messageState === 'error'" class="chat-empty">
-            <p class="muted">{{ messageError }}</p>
+        <div v-else-if="messageState === 'error'" class="chat-empty">
+          <p class="muted">{{ messageError }}</p>
+          <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
+            重试
+          </button>
+        </div>
+
+        <ChatThread
+          v-else
+          :messages="messages"
+          :pending="sending"
+          :optimistic="optimistic"
+          :streaming="streamingText"
+          :running-elsewhere="showRunning"
+        />
+
+        <RetrievedSources v-if="turnStatus" :status="turnStatus" :sources="turnSources" />
+
+        <div v-if="sendError" class="pane-pad">
+          <ErrorAlert :message="sendError" />
+        </div>
+
+        <!-- 会话被暂停：Agent 已提交退款申请，图停在那里等管理员决策。
+             这期间输入框必须锁上 —— 后端会返回 409，按钮能点就是骗人。 -->
+        <div v-if="waiting" class="pane-pad">
+          <div class="alert alert--warn alert--row">
+            <span>
+              这个会话已暂停，正在等待管理员审批（申请编号
+              {{ waitingRequestKey ?? '见「我的退款申请」' }}）。
+              批准或拒绝之后，结果会自动出现在上面的对话里。
+            </span>
             <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
-              重试
+              刷新
             </button>
           </div>
+        </div>
 
-          <ChatThread
-            v-else
-            :messages="messages"
-            :pending="sending"
-            :optimistic="optimistic"
-            :streaming="streamingText"
-            :running-elsewhere="showRunning"
+        <!-- 后台还在跑，但不是这个页面发起的（典型：发送过程中刷新了页面）。
+             服务端那一轮没有因为断线停下来，结果出来之前也发不了新消息。 -->
+        <div v-else-if="showRunning" class="pane-pad">
+          <div class="alert alert--info alert--row">
+            <span>
+              上一条消息还在回复中（页面刷新过，这里接不上原来的连接）。
+              完成后会自动出现在上面的对话里。
+            </span>
+            <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <!-- 输入框永远在这里：没选会话也能打字，发送时先把会话建出来。
+             ⚠️ 一轮没跑完之前不让切会话（列表 `:disabled="sending"`）：
+             结果要贴回发起时那个会话，切了就对不上；后端同一个会话也会返回 409。 -->
+        <form class="composer" @submit.prevent="send">
+          <input
+            v-model="draft"
+            class="composer__input"
+            :disabled="sending || waiting || runningElsewhere"
+            :placeholder="inputPlaceholder"
           />
-
-          <RetrievedSources v-if="turnStatus" :status="turnStatus" :sources="turnSources" />
-
-          <div v-if="sendError" class="pane-pad">
-            <ErrorAlert :message="sendError" />
-          </div>
-
-          <!-- 会话被暂停：Agent 已提交退款申请，图停在那里等管理员决策。
-               这期间输入框必须锁上 —— 后端会返回 409，按钮能点就是骗人。 -->
-          <div v-if="waiting" class="pane-pad">
-            <div class="alert alert--warn alert--row">
-              <span>
-                这个会话已暂停，正在等待管理员审批（申请编号
-                {{ waitingRequestKey ?? '见「我的退款申请」' }}）。
-                批准或拒绝之后，结果会自动出现在上面的对话里。
-              </span>
-              <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
-                刷新
-              </button>
-            </div>
-          </div>
-
-          <!-- 后台还在跑，但不是这个页面发起的（典型：发送过程中刷新了页面）。
-               服务端那一轮没有因为断线停下来，结果出来之前也发不了新消息。 -->
-          <div v-else-if="showRunning" class="pane-pad">
-            <div class="alert alert--info alert--row">
-              <span>
-                上一条消息还在回复中（页面刷新过，这里接不上原来的连接）。
-                完成后会自动出现在上面的对话里。
-              </span>
-              <button type="button" class="btn btn--ghost btn--sm" @click="reloadMessages">
-                刷新
-              </button>
-            </div>
-          </div>
-
-          <form class="composer" @submit.prevent="send">
-            <input
-              v-model="draft"
-              class="composer__input"
-              :disabled="sending || waiting || runningElsewhere"
-              :placeholder="inputPlaceholder"
-            />
-            <button type="submit" class="btn btn--primary btn--icon" :disabled="!canSend">
-              <AppIcon name="send" :size="15" />
-              <span>{{ sending ? '回复中…' : '发送' }}</span>
-            </button>
-          </form>
-        </template>
+          <button type="submit" class="btn btn--primary btn--icon" :disabled="!canSend">
+            <AppIcon name="send" :size="15" />
+            <span>{{ sending ? (creating ? '创建中…' : '回复中…') : '发送' }}</span>
+          </button>
+        </form>
       </section>
     </div>
   </div>

@@ -77,3 +77,5 @@ class MessageTurnOut(BaseModel):
     pending_request_key: str | None = None
     retrieval_status: RetrievalStatus
     retrieved_sources: list[RetrievedSourceOut]
+    # 首轮后自动生成的标题；非首轮或生成失败时为 None，前端不更新。
+    title: str | None = None

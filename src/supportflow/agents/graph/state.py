@@ -1,3 +1,4 @@
+
 """总图保存对话和本轮检索信息，业务办理过程保留在消息历史中。"""
 
 from typing import Literal, NotRequired, TypedDict
