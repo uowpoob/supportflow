@@ -185,6 +185,12 @@ watch(messagePage, (page) => {
  */
 function applyServerStatus(page: ConversationMessages | null): void {
   if (sending.value || page === null) return
+  // 服务端说这个会话正有一轮在跑（比如本页发起的流在刷新时断了、服务端还在跑）。
+  // 之前接口不返回这个状态、只能等发送被 409 挡回来才补记；现在历史接口直接给了。
+  if (page.running) {
+    startRunningElsewhere()
+    return
+  }
   if (page.status !== 'waiting_approval') {
     // 服务端说这个会话没在等审批。可能是刚被别人批准了，也可能本来就是正常的。
     if (waiting.value) stopWaiting()

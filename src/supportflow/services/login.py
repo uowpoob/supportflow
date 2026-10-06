@@ -36,6 +36,8 @@ async def create_login_session(
     ttl_seconds: int,
 ) -> tuple[str, datetime]:
     """提交会话后才返回原始凭证，避免数据库写入失败却下发 Cookie。"""
+    # 顺手把已过期的会话记录删掉
+    await db.execute(delete(AuthSession).where(AuthSession.expires_at <= utc_now()))
     token = generate_session_token()
     expires_at = utc_now() + timedelta(seconds=ttl_seconds)
     db.add(AuthSession(

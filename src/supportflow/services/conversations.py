@@ -1,5 +1,6 @@
 """会话归属、消息展示和单轮对话；HTTP 不直接操作 checkpoint 或拼接 SQL。"""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from uuid import uuid4
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.llm import chat_model
 from supportflow.agents.graph.state import SupportState
+from supportflow.db.session import SessionLocal
 from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
 from supportflow.schemas.conversations import (
@@ -159,6 +161,7 @@ class ConversationChat:
             total=len(messages), offset=offset, limit=limit,
             status="waiting_approval" if pending_request_key else "completed",
             pending_request_key=pending_request_key,
+            running=conversation_id in self._running,
         )
 
     async def send_message(
@@ -198,71 +201,107 @@ class ConversationChat:
         finally:
             self._running.discard(conversation_id)
 
-    async def stream_message(
-        self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
-    ) -> AsyncIterator[str]:
-        """兼容仅消费文字片段的调用方。"""
-        stream = self.stream_turn(db, user_id, conversation_id, content)
-        try:
-            async for event in stream:
-                if isinstance(event, str):
-                    yield event
-        finally:
-            await stream.aclose()
-
+    # async def stream_message(
+    #     self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
+    # ) -> AsyncIterator[str]:
+    #     """兼容仅消费文字片段的调用方。"""
+    #     stream = self.stream_turn(db, user_id, conversation_id, content)
+    #     try:
+    #         async for event in stream:
+    #             if isinstance(event, str):
+    #                 yield event
+    #     finally:
+    #         await stream.aclose()
+##########################################################################################################################################
     async def stream_turn(
         self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
     ) -> AsyncIterator[str | MessageTurnOut]:
-        """先逐段产出助手文字，图执行结束后产出本轮完整结果。"""
+        """先逐段产出助手文字，图执行结束后产出本轮完整结果。
+
+        客户端断开不再让本轮作废：图始终在一个独立的后台任务里跑，用的是自己
+        的数据库会话，与本次请求的生命周期解耦。断开时只中断"转发给客户端"这一步，
+        图继续跑完、结果照常写入 checkpoint，之后刷新历史就能读到。
+        """
         await _require_conversation(db, user_id, conversation_id)
         if conversation_id in self._running:
             raise ConversationError("本会话正在回复，请等待本轮完成", status_code=409)
         self._running.add(conversation_id)
-        try:
-            config = {"configurable": {"thread_id": conversation_id}}
-            snapshot = await self.graph.aget_state(config)
-            if snapshot.values.get("pending_approval"):
-                raise ConversationError("本会话正在等待管理员审批", status_code=409)
-            # 本轮开始前还没有任何消息 = 这是首轮，结束后值得生成标题。
-            was_empty = not snapshot.values.get("messages")
-            await conversation_repo.touch_conversation(db, user_id, conversation_id)
-            await db.commit()
 
-            message = HumanMessage(id=str(uuid4()), content=content)
+        config = {"configurable": {"thread_id": conversation_id}}
+        snapshot = await self.graph.aget_state(config)
+        if snapshot.values.get("pending_approval"):
+            self._running.discard(conversation_id)
+            raise ConversationError("本会话正在等待管理员审批", status_code=409)
+        # 本轮开始前还没有任何消息 = 这是首轮，结束后值得生成标题。
+        was_empty = not snapshot.values.get("messages")
+        # 认证/归属与活动时间更新都在请求的 db 上做，做完即提交、不再碰它。
+        await conversation_repo.touch_conversation(db, user_id, conversation_id)
+        await db.commit()
+
+        message = HumanMessage(id=str(uuid4()), content=content)
+
+        # 图执行用独立的数据库会话：即使客户端断开、请求结束，这个会话也不受影响，
+        # 工具仍能正常读写 MySQL。由后台任务负责打开和关闭。
+        worker_db = SessionLocal()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _run_graph() -> None:
+            """在后台跑完整个图，把结果与收尾都做完，再释放锁。
+
+            无论客户端是否还在，它都会执行到最后：正常产出文字时放进 queue，
+            跑完产出完整结果，最后关闭独立会话、释放 _running 锁。
+            """
             try:
                 graph_stream = self.graph.astream(
                     {"messages": [message]},
                     config,
-                    context=SupportContext(user_id, conversation_id, db),
+                    context=SupportContext(user_id, conversation_id, worker_db),
                     stream_mode="messages",
                     subgraphs=True,
                     version="v2",
                 )
-                try:
-                    async for part in graph_stream:
-                        if part["type"] != "messages":
-                            continue
-                        chunk, metadata = part["data"]
-                        # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
-                        if metadata.get("langgraph_node") != "model":
-                            continue
-                        if isinstance(chunk, AIMessageChunk) and chunk.text:
-                            yield str(chunk.text)
-                finally:
-                    # 客户端断开时立刻关闭图流，不再继续读取后续模型/工具事件。
-                    await graph_stream.aclose()
+                async for part in graph_stream:
+                    if part["type"] != "messages":
+                        continue
+                    chunk, metadata = part["data"]
+                    # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
+                    if metadata.get("langgraph_node") != "model":
+                        continue
+                    if isinstance(chunk, AIMessageChunk) and chunk.text:
+                        await queue.put(("delta", str(chunk.text)))
                 snapshot = await self.graph.aget_state(config)
-                title = await self._maybe_generate_title(db, user_id, conversation_id, content, was_empty)
-                yield _turn_from_state(snapshot.values, conversation_id, message.id, title)
+                title = await self._maybe_generate_title(
+                    worker_db, user_id, conversation_id, content, was_empty
+                )
+                await queue.put(("done", _turn_from_state(
+                    snapshot.values, conversation_id, message.id, title
+                )))
             except Exception as exc:
                 # 工具可能已经写库；失败时不自动重新执行本轮。
                 logger.warning("流式对话执行失败（%s）", type(exc).__name__)
-                raise ConversationError(
-                    "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
-                    status_code=502,
-                ) from exc
+                await queue.put(("error", exc))
+            finally:
+                await worker_db.close()
+                self._running.discard(conversation_id)
+
+        task = asyncio.create_task(_run_graph())
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "delta":
+                    yield payload
+                elif kind == "done":
+                    yield payload
+                    break
+                elif kind == "error":
+                    raise ConversationError(
+                        "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
+                        status_code=502,
+                    ) from payload
         finally:
-            self._running.discard(conversation_id)
+            # 正常或出错路径：等后台任务收尾（关会话、释放锁）再返回。
+            # 不会真正等待，后台任务得以继续在后台跑完、照常落库。
+            await task
 
     async def resume_approval(
         self, db: AsyncSession, user_id: int, conversation_id: str, request_key: str,

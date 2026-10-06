@@ -221,6 +221,8 @@ export interface ConversationMessages {
   status: MessageTurnStatus
   /** `waiting_approval` 时是那张暂停的申请编号；否则为 null */
   pending_request_key: string | null
+  /** 本进程里这个会话是否正有一轮在跑（流式输出尚未结束）；刷新后靠它认出"正在回复" */
+  running: boolean
 }
 
 /** 对齐后端 `schemas/conversations.py::RetrievedSourceOut` —— 本轮召回的候选片段 */

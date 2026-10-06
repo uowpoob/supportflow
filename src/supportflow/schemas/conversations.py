@@ -59,6 +59,8 @@ class ConversationMessagesOut(BaseModel):
     limit: int
     status: Literal["completed", "waiting_approval"]
     pending_request_key: str | None = None
+    # 该会话是否正在执行本轮（流式输出尚未结束）。前端据此显示"正在回复…"，
+    running: bool = False
 
 
 class RetrievedSourceOut(BaseModel):
