@@ -120,7 +120,8 @@ async def stream_message(
         async for item in stream:
             if isinstance(item, MessageTurnOut):
                 yield ServerSentEvent(event="done", data=item)
-            else:                yield ServerSentEvent(event="delta", data={"text": item})
+            else:
+                yield ServerSentEvent(event="delta", data={"text": item})
     except ConversationError as exc:
         # SSE 响应头可能已经发出，不能再用 HTTP 状态码表示本轮失败。
         yield ServerSentEvent(event="error", data={"status": exc.status_code, "message": exc.message})
