@@ -577,13 +577,16 @@ function selectConversation(id: string): void {
       </aside>
 
       <section class="chat-layout__main">
-        <!-- 还没选中会话 = 一段还没开始的对话。下面的输入框照常能用：
-             点发送会先自动建一个会话，再把这句发进去（见 `send`）。 -->
-        <div v-if="selectedId === null" class="chat-empty">
-          <span class="chat-empty__icon"><AppIcon name="chat" :size="26" /></span>
-          <p class="chat-empty__title">开始一段新对话</p>
-          <p class="muted">在下面的输入框里提问，发送后会自动为你开一个新会话。</p>
-        </div>
+        <!-- 还没选中会话也直接给一个空聊天区（像 ChatGPT 那样：进来就能打字，
+             不用先点左边列表）。发送时 `send` 会先建一个会话、再把这句发进去。 -->
+        <ChatThread
+          v-if="selectedId === null"
+          :messages="messages"
+          :pending="sending"
+          :optimistic="optimistic"
+          :streaming="streamingText"
+          :running-elsewhere="showRunning"
+        />
 
         <div v-else-if="loadingMessages" class="pane-pad">
           <LoadingLine />

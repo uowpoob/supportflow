@@ -1,9 +1,9 @@
 :root {
-  --bg: #f4f6f9;
+  --bg: #f5f7fb;
   --surface: #ffffff;
-  --border: #e4e8ee;
-  --text: #1f2328;
-  --text-muted: #6b7280;
+  --border: #e6eaf1;
+  --text: #1a2233;
+  --text-muted: #667085;
   --primary: #2563eb;
   --primary-dark: #1d4ed8;
   --danger: #dc2626;
@@ -15,8 +15,23 @@
   --radius: 10px;
   /* 卡片比按钮圆一点：按钮小，大圆角显笨；面板大，直角显硬。 */
   --radius-card: 14px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  --shadow-hover: 0 6px 18px rgba(16, 24, 40, 0.10);
+  /* 三档阴影：sm 贴地（输入框、小标签），card 默认，hover 抬起。
+     每档都是「近处一层实影 + 远处一层大而淡的漫射」：
+     只有一层的阴影边缘发硬，远层够大够淡才托得出"纸浮在桌面上"的感觉。
+     统一从一个冷灰里取色（16,24,40），不掺别的主色，界面才不会"发花"。 */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 2px 6px -2px rgba(16, 24, 40, 0.05),
+    0 12px 28px -12px rgba(16, 24, 40, 0.08);
+  --shadow-hover:
+    0 2px 6px -2px rgba(16, 24, 40, 0.06),
+    0 20px 44px -16px rgba(16, 24, 40, 0.16);
+  /* 全站统一的缓动曲线：起步快、收尾柔（回弹感比 ease 高级）。
+     所有 hover / 进场动画都从这一个变量取，动效的"手感"才一致。 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 输入框/导航的聚焦光环：一层半透明蓝就够了，太浓反而像报错 */
+  --ring: 0 0 0 3.5px rgba(37, 99, 235, 0.13);
   /* 内容区的总宽度：顶栏和正文共用同一个值，两边的左右边缘才对得齐。
      想再宽/再窄只改这一处。 */
   --page-max: 1440px;
@@ -38,22 +53,24 @@ body {
      `fixed` 是必须的 —— 否则滚到底部时渐变跟着停，底下就变成一片死灰。 */
   background-color: var(--bg);
   background-image:
-    radial-gradient(900px 420px at 8% -6%, rgba(37, 99, 235, 0.09), transparent 62%),
-    radial-gradient(760px 380px at 92% 2%, rgba(139, 92, 246, 0.08), transparent 62%),
-    radial-gradient(800px 420px at 50% 0%, rgba(14, 165, 233, 0.06), transparent 60%);
+    radial-gradient(900px 420px at 8% -6%, rgba(37, 99, 235, 0.08), transparent 62%),
+    radial-gradient(760px 380px at 92% 2%, rgba(139, 92, 246, 0.07), transparent 62%),
+    radial-gradient(800px 420px at 50% 0%, rgba(14, 165, 233, 0.055), transparent 60%);
   background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans SC', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* 细滚动条：默认那条又宽又灰，在浅色界面上很抢眼 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd2d9 transparent;
+  scrollbar-color: rgba(102, 112, 133, 0.28) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -70,11 +87,11 @@ body {
   border-radius: 999px;
   /* content-box 下才留得出"悬浮"的间隙：实心的宽滚动条看着笨重 */
   background-clip: content-box;
-  background-color: #cbd2d9;
+  background-color: rgba(102, 112, 133, 0.28);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #aab2bd;
+  background-color: rgba(102, 112, 133, 0.45);
 }
 
 /* 键盘 Tab 走到哪要有记号；鼠标点了不要留一圈难看的蓝边 */
@@ -96,6 +113,35 @@ code {
   font-size: 13px;
 }
 
+/* ---------- 进场动画 ---------- */
+
+/* 淡入上移：主要面板和消息气泡进场用。
+   `backwards` 而不是 `both` —— 动画放完就把 transform 还回去，
+   不然 .entry-card 悬停时那 2px 的抬起会被动画的最终帧压住，动不了。 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 位移比 rise-in 更小、时长更长：给卡片组用的"错峰进场"打底，
+   多张卡同时出现时延迟错开（见 .card-grid），一起蹦反而像卡顿。 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 /* ---------- 通用块 ---------- */
 
 .card {
@@ -103,6 +149,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
+  animation: rise-in 0.4s var(--ease-out) backwards;
 }
 
 .btn {
@@ -112,8 +159,10 @@ code {
   background: var(--surface);
   color: var(--text);
   font-size: 14px;
+  font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  transition: background 0.18s var(--ease-out), border-color 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease-out), transform 0.14s var(--ease-out);
 }
 
 .btn:disabled {
@@ -127,13 +176,22 @@ code {
 }
 
 .btn--primary {
-  background: linear-gradient(180deg, #3b82f6, var(--primary));
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.35);
+  background: linear-gradient(180deg, #4184f7, var(--primary));
+  /* 外层一层投影 + 内侧一条 1px 的高光：渐变按钮的"玻璃边"就靠它，不靠描边 */
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.18);
   color: #fff;
 }
 
 .btn--primary:hover:not(:disabled) {
   background: linear-gradient(180deg, var(--primary), var(--primary-dark));
+  box-shadow: 0 6px 16px -6px rgba(37, 99, 235, 0.55);
+  transform: translateY(-1px);
+}
+
+.btn--primary:not(:disabled):active {
+  /* 按下时反而"缩回去 + 阴影收干"：和 hover 的上浮形成对比，按压感更真实 */
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .btn--ghost {
@@ -141,7 +199,7 @@ code {
   color: var(--text-muted);
 }
 
-.btn--ghost:hover {
+.btn--ghost:hover:not(:disabled) {
   background: #f6f8fa;
   border-color: #cfd6de;
   color: var(--text);
@@ -163,22 +221,27 @@ code {
 
 .alert {
   padding: 10px 12px;
+  border: 1px solid transparent;
   border-radius: 8px;
   font-size: 13px;
 }
 
+/* 三种语义各带一圈同色系的淡描边：块面大了之后单靠底色容易"糊"进卡片 */
 .alert--error {
   background: var(--danger-bg);
+  border-color: rgba(220, 38, 38, 0.16);
   color: var(--danger);
 }
 
 .alert--warn {
   background: var(--warn-bg);
+  border-color: rgba(180, 83, 9, 0.16);
   color: var(--warn);
 }
 
 .alert--info {
   background: var(--info-bg);
+  border-color: rgba(29, 78, 216, 0.14);
   color: var(--info);
 }
 
@@ -214,26 +277,60 @@ code {
   justify-content: center;
   min-height: 100%;
   padding: 24px;
-  /* 中间亮、四周略暗，登录卡片看起来浮在页面上 */
-  background: radial-gradient(120% 80% at 50% 0%, #ffffff 0%, var(--bg) 60%);
+  /* 三层背景：两团品牌色光晕 + 一层细点阵。
+     点阵要单独给 `background-size`（第三层），前两层跟随元素大小铺开。 */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(640px 420px at 16% 10%, rgba(37, 99, 235, 0.15), transparent 62%),
+    radial-gradient(720px 460px at 86% 86%, rgba(139, 92, 246, 0.13), transparent 62%),
+    radial-gradient(520px 320px at 80% 6%, rgba(14, 165, 233, 0.11), transparent 60%),
+    radial-gradient(rgba(30, 41, 59, 0.055) 1px, transparent 1.4px);
+  background-size: auto, auto, auto, 22px 22px;
+  background-repeat: no-repeat, no-repeat, no-repeat, repeat;
+  background-attachment: fixed;
 }
 
+/* 毛玻璃卡片：半透明白 + 模糊，让背景那两团光晕隐约透过来，
+   比纯白实心卡片有质感得多。描边用白色而不是灰 —— 玻璃的"厚度感"。 */
 .login-card {
+  position: relative;
   width: 100%;
   max-width: 400px;
-  padding: 32px 30px;
-  border-radius: var(--radius-card);
-  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.08);
+  padding: 36px 32px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow:
+    0 24px 60px -24px rgba(16, 24, 40, 0.28),
+    0 8px 24px -12px rgba(16, 24, 40, 0.12);
+  animation: rise-in 0.4s var(--ease-out) backwards;
+  overflow: hidden;
+}
+
+/* 卡片顶部一条品牌渐变线（蓝→紫，往右淡出）：
+   玻璃卡配一条"光边"，是整张登录页唯一的彩色装饰，点到为止。 */
+.login-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), #8b5cf6 55%, transparent);
+  opacity: 0.85;
 }
 
 .login-card__head {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 
 .login-card__title {
-  margin: 10px 0 2px;
+  margin: 12px 0 3px;
   font-size: 22px;
+  letter-spacing: 0.2px;
 }
 
 .login-card__subtitle {
@@ -242,12 +339,16 @@ code {
   font-size: 13px;
 }
 
-/* 登录页那个 logo 复用顶栏的样式，但它是页面主角，放大一档 */
+/* 登录页那个 logo 复用顶栏的样式，但它是页面主角，放大一档。
+   外圈再加一圈同色的"光环"（4px 淡蓝描边）：主角要有一点点舞台灯。 */
 .login-card__head .topbar__logo {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  font-size: 15px;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  font-size: 16px;
+  box-shadow:
+    0 0 0 5px rgba(37, 99, 235, 0.08),
+    0 8px 20px -6px rgba(37, 99, 235, 0.55);
 }
 
 .login-card .btn--block {
@@ -269,6 +370,7 @@ code {
   display: block;
   margin-bottom: 6px;
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -279,13 +381,26 @@ code {
   border-radius: 8px;
   background: #fff;
   font-size: 14px;
+  font-family: inherit;
   color: var(--text);
+  transition: border-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
 }
 
 .field__input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--ring);
+}
+
+/* 原生下拉框的箭头各浏览器长得不一样，统一起自己画：
+   `appearance: none` 关掉默认外观，右侧留出空间塞一枚自绘的 SVG 箭头。 */
+select.field__input {
+  appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  cursor: pointer;
 }
 
 /* ---------- 布局 ---------- */
@@ -305,9 +420,11 @@ code {
   display: flex;
   height: 60px;
   padding: 0 24px;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border);
+  /* 透明度压低一点 + 饱和度补偿：底下的页面渐变隐约透出来，顶栏不像一块死白 */
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-bottom: 1px solid rgba(228, 232, 238, 0.9);
 }
 
 /* 顶栏内容走和正文一样的总宽度 —— 商标、右上角的用户名跟下面的卡片左右对齐，
@@ -334,8 +451,9 @@ code {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: linear-gradient(135deg, #3b82f6, var(--primary-dark));
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+  background: linear-gradient(135deg, #4285f7, var(--primary-dark));
+  /* 内侧一条高光让方块有一点"釉面"感，投影让它从顶栏里浮出来 */
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -363,7 +481,8 @@ code {
   color: var(--text-muted);
   text-decoration: none;
   font-size: 13.5px;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.18s var(--ease-out), color 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease-out);
 }
 
 /* 图标比文字淡一点：视线先落在菜单名上，图标只当路标。
@@ -385,8 +504,11 @@ code {
   opacity: 1;
 }
 
+/* 选中项是一枚"白色小药片"：白底 + 细描边 + 一点点投影，
+   在毛玻璃顶栏上比一整块淡蓝色更立得住，也更有"按下去"的层次。 */
 .navlink--active {
-  background: var(--info-bg);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 0 0 1px var(--border);
   color: var(--primary);
   font-weight: 600;
 }
@@ -434,14 +556,17 @@ code {
   width: 100%;
   max-width: var(--page-max);
   margin: 0 auto;
-  padding: 26px 24px 56px;
+  padding: 28px 24px 60px;
 }
 
-/* 标题块自带下间距和一条分隔线，卡片区和标题不会糊在一起 */
+/* 标题块自带下间距和一条分隔线，卡片区和标题不会糊在一起。
+   分隔线换成"左实右虚"的渐变（border-image）：
+   一条到头都一样实的线视觉上很重，往右淡出视线就自然落到下面的卡片上。 */
 .page-head {
   margin-bottom: 18px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
+  border-image: linear-gradient(90deg, var(--border), rgba(230, 234, 241, 0) 82%) 1;
 }
 
 .page-head__title {
@@ -481,6 +606,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
+  animation: rise-in 0.4s var(--ease-out) backwards;
 }
 
 /* 左栏顶部那条标题 */
@@ -538,25 +664,6 @@ code {
   text-align: center;
 }
 
-/* 圆形浅蓝底 + 图标：空状态不再是干巴巴两行字 */
-.chat-empty__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 6px;
-  border-radius: 50%;
-  background: var(--info-bg);
-  color: var(--primary);
-  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.05);
-}
-
-.chat-empty__title {
-  margin: 0;
-  font-weight: 600;
-}
-
 .chat-empty p {
   margin: 0;
 }
@@ -576,13 +683,14 @@ code {
   border-radius: 10px;
   background: #fff;
   font-size: 14px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+  transition: border-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
 }
 
 .composer__input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--ring);
 }
 
 /* ---------- 管理端 ---------- */
@@ -594,25 +702,43 @@ code {
 }
 
 .entry-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 20px;
   background: var(--surface);
-  /* 顶部一条彩色描边：一眼分得清哪块是哪块，比整块上色克制得多 */
   border: 1px solid var(--border);
-  border-top: 3px solid var(--accent-fg, var(--primary));
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: border-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out),
+    transform 0.2s var(--ease-out);
+  /* 只做透明度进场：transform 留给悬停的抬起，两种动画不打架 */
+  animation: fade-in 0.4s var(--ease-out) backwards;
+  overflow: hidden;
 }
 
+/* 顶部一条彩色渐变高光线（实色 → 往右淡出），替代整条 3px 实色边：
+   实色边是"标签"，渐变线是"光"，后者才衬得起下面那层柔阴影。 */
+.entry-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-fg, var(--primary)), transparent 78%);
+  opacity: 0.85;
+}
+
+/* 悬停整卡抬起 + 一圈同色光晕（--accent-glow 各配色自给）：
+   入口卡是首页的"按钮"，要比普通卡片活泼一点。 */
 .entry-card:hover {
   border-color: var(--accent-fg, var(--primary));
-  box-shadow: var(--shadow-hover);
-  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover), 0 0 24px -8px var(--accent-glow, rgba(37, 99, 235, 0.35));
+  transform: translateY(-3px);
 }
 
 /* 彩色圆角方块 + 里面的白色图标 = 这块卡片是干什么的，不用读标题就知道。
@@ -627,39 +753,58 @@ code {
   border-radius: 11px;
   background: var(--accent-bg, var(--info-bg));
   color: var(--accent-fg, var(--primary));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
   transition: transform 0.15s;
 }
 
 .entry-card:hover .entry-card__icon {
-  transform: scale(1.06);
+  transform: scale(1.08);
 }
 
-/* 每种配色成对给出：淡底 + 饱和的前景色。
+/* 每种配色成对给出：淡底 + 饱和的前景色，外加一枚悬停光晕色。
    淡到极致才敢铺这么大一块面积 —— 配色语义也没跑到常识之外
    （蓝=常规、绿=钱、紫=凭据、玫红=待办要处理、琥珀=个人事项）。 */
 .entry-card--blue {
   --accent-bg: #e8f0ff;
   --accent-fg: #2563eb;
+  --accent-glow: rgba(37, 99, 235, 0.32);
 }
 
 .entry-card--emerald {
   --accent-bg: #e6f7f0;
   --accent-fg: #0f8a63;
+  --accent-glow: rgba(15, 138, 99, 0.3);
 }
 
 .entry-card--violet {
   --accent-bg: #f0eafe;
   --accent-fg: #7c4ddb;
+  --accent-glow: rgba(124, 77, 219, 0.3);
 }
 
 .entry-card--amber {
   --accent-bg: #fdf1dc;
   --accent-fg: #b5730c;
+  --accent-glow: rgba(181, 115, 12, 0.28);
 }
 
 .entry-card--rose {
   --accent-bg: #fdeaef;
   --accent-fg: #d03b60;
+  --accent-glow: rgba(208, 59, 96, 0.3);
+}
+
+/* 错峰进场：第二、三张卡依次晚一点点出现，"逐个落定"比"同时砸下来"从容 */
+.card-grid > .entry-card:nth-child(2) {
+  animation-delay: 0.06s;
+}
+
+.card-grid > .entry-card:nth-child(3) {
+  animation-delay: 0.12s;
+}
+
+.card-grid > .entry-card:nth-child(4) {
+  animation-delay: 0.18s;
 }
 
 .entry-card__title {
@@ -709,28 +854,43 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
+  animation: rise-in 0.4s var(--ease-out) backwards;
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13.5px;
+  /* 订单号、金额、时间都是数字：等宽数字让每一列的个位对齐，扫读快很多 */
+  font-variant-numeric: tabular-nums;
 }
 
 .table th,
 .table td {
-  padding: 11px 16px;
+  padding: 12px 16px;
   text-align: left;
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
 }
 
+/* 首尾列多留一点：表格圆角只切在容器上，文字别贴着弧线走 */
+.table th:first-child,
+.table td:first-child {
+  padding-left: 20px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 20px;
+}
+
 .table th {
-  background: #f7f9fc;
-  color: var(--text-muted);
+  background: linear-gradient(180deg, #f9fbfd, #f4f6fa);
+  color: #5b6472;
   font-weight: 600;
   font-size: 12.5px;
   letter-spacing: 0.3px;
+  text-transform: none;
 }
 
 .table tbody tr:last-child td {
@@ -738,16 +898,19 @@ code {
 }
 
 .table tbody tr {
-  transition: background 0.12s;
+  transition: background 0.15s var(--ease-out);
 }
 
+/* 行悬停用带一点点蓝的半透明色而不是实色：
+   半透明叠在白底上是"染上去"的，跟整页的冷灰底更融。 */
 .table tbody tr:hover {
-  background: #f6f9ff;
+  background: rgba(37, 99, 235, 0.035);
 }
 
 .link {
   color: var(--primary);
   text-decoration: none;
+  font-weight: 500;
 }
 
 .link:hover {
@@ -776,8 +939,9 @@ code {
   padding: 36px 20px;
   text-align: center;
   background: var(--surface);
-  border: 1px dashed #cdd4dc;
+  border: 1px dashed #d3dae2;
   border-radius: var(--radius-card);
+  animation: fade-in 0.35s var(--ease-out) backwards;
 }
 
 /* 空状态里的箱子图标：淡底色的一枚圆角方块，跟聊天空状态那个圆圈区分开 */
@@ -813,6 +977,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
+  animation: rise-in 0.4s var(--ease-out) backwards;
 }
 
 .kv__row {
@@ -821,6 +986,7 @@ code {
   gap: 12px;
   padding: 11px 16px;
   border-bottom: 1px solid var(--border);
+  transition: background 0.15s var(--ease-out);
 }
 
 .kv__row:hover {
@@ -839,6 +1005,7 @@ code {
 .kv__value {
   margin: 0;
   word-break: break-word;
+  font-variant-numeric: tabular-nums;
 }
 
 .section__title {
@@ -884,6 +1051,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #fbfcfd;
+  box-shadow: inset 0 1px 2px rgba(16, 24, 40, 0.02);
 }
 
 /* 列表本身不滚 —— 滚动交给上面那个 `.side-scroll` 盒子。 */
@@ -903,37 +1071,42 @@ code {
   border-bottom: none;
 }
 
-/* 列表项里放的是整块按钮（会话条目），内边距交给按钮，否则两层一起padding会很挤。 */
+/* 列表项里放的是整块按钮（会话条目），内边距交给按钮，否则两层一起padding会很挤。
+   这里给一点点左右留白，让按钮的圆角不贴着滚动盒子的边框；
+   圆角行自己靠底色区分，原来的行分隔线就去掉 —— 线和圆角叠在一起会很乱。 */
 .side-list__item--flush {
-  padding: 0;
+  padding: 3px 7px;
+  border-bottom: none;
 }
 
+/* 会话条目是一枚"圆角行"：悬停铺淡灰、选中铺淡蓝，
+   比一条条横线分隔的样子更接近常见的聊天应用，视觉也更松。 */
 .side-list__btn {
   display: flex;
   flex-direction: column;
   gap: 2px;
   width: 100%;
-  padding: 10px 14px;
-  /* 左边留一根 3px 的透明边：选中时染成蓝色。
-     不用 box-shadow/额外元素，状态切换就不会引起宽度抖动。 */
+  padding: 9px 11px;
   border: none;
-  border-left: 3px solid transparent;
+  border-radius: 9px;
   background: none;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.18s var(--ease-out), color 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease-out);
 }
 
 .side-list__btn:hover:not(:disabled) {
-  background: #f4f6f9;
+  background: #eef2f7;
 }
 
-/* 正看着的那个会话要和别的区分开，否则切来切去不知道自己在哪一条 */
+/* 正看着的那个会话要和别的区分开，否则切来切去不知道自己在哪一条。
+   淡蓝底之外再补一圈同色的细内描边：圆角块只靠底色略"平"，描边一勾就"立"了。 */
 .side-list__btn--active {
-  border-left-color: var(--primary);
   background: var(--info-bg);
+  box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.14);
   color: var(--info);
 }
 
@@ -997,6 +1170,10 @@ code {
 /* `column` + `align-self` 就能分左右，不用算百分比宽度 */
 .bubble-row {
   display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  /* 每条消息进场轻轻浮一下：短、位移小，只够"注意到"，不至于抢戏 */
+  animation: rise-in 0.25s var(--ease-out) backwards;
 }
 
 .bubble-row--user {
@@ -1007,10 +1184,44 @@ code {
   justify-content: flex-start;
 }
 
+/* 每条消息前的头像圆块：用户蓝、助手灰，图标用 currentColor 跟着变 */
+.bubble-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bubble-avatar--user {
+  background: linear-gradient(135deg, #4285f7, var(--primary-dark));
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.35);
+  color: #fff;
+}
+
+.bubble-avatar--assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  color: var(--primary);
+}
+
+/* 用户消息整行靠右，头像要跑到气泡**右边**去 —— 靠 `order` 把头像排到气泡后面。
+   assistant 行不用动：头像本来就在最左，跟着气泡顺序就是对的。 */
+.bubble-row--user .bubble-avatar {
+  order: 2;
+}
+
+.bubble-row--user .bubble {
+  order: 1;
+}
+
 .bubble {
   max-width: 78%;
   padding: 10px 13px;
-  border-radius: 14px;
+  border-radius: 15px;
   font-size: 13.5px;
   line-height: 1.7;
   /* 助手回答里带换行，默认会压成一行 —— 必须保留，否则整段挤成一块 */
@@ -1021,7 +1232,7 @@ code {
 /* 用户的话：实心蓝、右下角收成小尖，方向感更强 */
 .bubble--user {
   border-bottom-right-radius: 5px;
-  background: linear-gradient(135deg, #3b82f6, var(--primary-dark));
+  background: linear-gradient(135deg, #4285f7, var(--primary-dark));
   box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
   color: #fff;
 }
@@ -1031,7 +1242,7 @@ code {
   border: 1px solid var(--border);
   border-bottom-left-radius: 5px;
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-sm);
   color: var(--text);
 }
 
@@ -1086,8 +1297,12 @@ code {
    而不是让用户去读一列灰字。颜色语义跟 .alert 一致：蓝=进行中、绿=成功（对号）、
    黄=等待处理、红=否定的结果。 */
 
+/* inline-flex + 一枚前置圆点：标签从"一块色底"变成"一枚指示灯"，
+   同一行里多个标签扫过去，靠圆点就能对齐视线。 */
 .tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 2px 9px;
   border-radius: 999px;
   font-size: 12px;
@@ -1095,28 +1310,43 @@ code {
   white-space: nowrap;
 }
 
+.tag::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
 .tag--info {
   background: var(--info-bg);
+  box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.1);
   color: var(--info);
 }
 
 .tag--ok {
   background: #ecfdf5;
+  box-shadow: inset 0 0 0 1px rgba(4, 120, 87, 0.1);
   color: #047857;
 }
 
 .tag--warn {
   background: var(--warn-bg);
+  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.12);
   color: var(--warn);
 }
 
 .tag--danger {
   background: var(--danger-bg);
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.1);
   color: var(--danger);
 }
 
 .tag--muted {
   background: #eef1f4;
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.05);
   color: var(--text-muted);
 }
 
@@ -1157,4 +1387,3 @@ code {
   color: var(--text-muted);
   font-size: 13px;
 }
-

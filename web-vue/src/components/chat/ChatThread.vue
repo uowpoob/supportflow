@@ -2,6 +2,7 @@
 import { nextTick, onMounted, ref, watch } from 'vue'
 
 import type { ChatMessage } from '../../types'
+import AppIcon from '../common/AppIcon.vue'
 
 /**
  * 消息流。
@@ -75,20 +76,32 @@ onMounted(scrollToBottom)
       class="bubble-row"
       :class="`bubble-row--${message.role}`"
     >
+      <span class="bubble-avatar" :class="`bubble-avatar--${message.role}`">
+        <AppIcon :name="message.role === 'user' ? 'user' : 'robot'" :size="16" />
+      </span>
       <div class="bubble" :class="`bubble--${message.role}`">{{ message.content }}</div>
     </div>
 
     <div v-if="optimistic" class="bubble-row bubble-row--user">
+      <span class="bubble-avatar bubble-avatar--user">
+        <AppIcon name="user" :size="16" />
+      </span>
       <div class="bubble bubble--user bubble--pending">{{ optimistic }}</div>
     </div>
 
     <!-- 流式输出中：已经吐出来的字。等 `done` 事件回来时下面那个会变成正式消息。 -->
     <div v-if="streaming" class="bubble-row bubble-row--assistant">
+      <span class="bubble-avatar bubble-avatar--assistant">
+        <AppIcon name="robot" :size="16" />
+      </span>
       <div class="bubble bubble--assistant bubble--pending">{{ streaming }}</div>
     </div>
 
     <!-- 还没拿到第一个字。已经流式出字之后就不再显示它，否则会跟上面的草稿重复。 -->
     <div v-if="(pending || runningElsewhere) && !streaming" class="bubble-row bubble-row--assistant">
+      <span class="bubble-avatar bubble-avatar--assistant">
+        <AppIcon name="robot" :size="16" />
+      </span>
       <div class="bubble bubble--assistant bubble--pending">
         {{ runningElsewhere ? '正在回复（页面刷新过，完成后会出现在这里）' : '正在回复…' }}
       </div>

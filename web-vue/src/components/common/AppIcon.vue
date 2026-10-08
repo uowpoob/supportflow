@@ -100,6 +100,20 @@ const ICONS: Record<string, Shape[]> = {
     { t: 'circle', cx: 12, cy: 12, r: 8.4 },
     { t: 'path', d: 'M12 7.2V12l3.4 2' },
   ],
+  // 人：用户消息头像
+  user: [
+    { t: 'circle', cx: 12, cy: 8.2, r: 3.4 },
+    { t: 'path', d: 'M5.2 19.6a6.8 6.8 0 0 1 13.6 0' },
+  ],
+  // 机器人：助手消息头像
+  robot: [
+    { t: 'rect', x: 5.2, y: 7.6, w: 13.6, h: 9.6, r: 2.4 },
+    { t: 'line', x1: 12, y1: 3.6, x2: 12, y2: 7.6 },
+    { t: 'circle', cx: 12, cy: 4.2, r: 0.7 },
+    { t: 'circle', cx: 9.2, cy: 12.4, r: 1 },
+    { t: 'circle', cx: 14.8, cy: 12.4, r: 1 },
+    { t: 'line', x1: 9.6, y1: 15.4, x2: 14.4, y2: 15.4 },
+  ],
 }
 
 const props = withDefaults(

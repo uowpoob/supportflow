@@ -3,7 +3,12 @@ import { fetchOrders } from '../../api/admin'
 import ResourceListPage from '../../components/common/ResourceListPage.vue'
 import type { Column } from '../../components/common/table'
 import { formatCents, formatDateTime } from '../../components/common/value'
-import { FULFILLMENT_STATUS_LABELS, PAYMENT_STATUS_LABELS, labelOf } from '../../labels'
+import {
+  fulfillmentStatusCellClass,
+  fulfillmentStatusText,
+  paymentStatusCellClass,
+  paymentStatusText,
+} from '../../components/orders/orderTag'
 
 /**
  * 列表列：**显式声明**，不用自动推导。
@@ -11,6 +16,7 @@ import { FULFILLMENT_STATUS_LABELS, PAYMENT_STATUS_LABELS, labelOf } from '../..
  * 表头就自己多一列，界面什么时候变的都没人知道。
  *
  * 注意 `render` 返回的是**字符串**（Vue 的列渲染不像 React 那样能返回 JSX）。
+ * 状态列的配色归 `cellClass` 管（文案归 `render`），和退款列表同一个套路。
  */
 const COLUMNS: Column[] = [
   { key: 'order_no', label: '订单号' },
@@ -23,12 +29,14 @@ const COLUMNS: Column[] = [
   {
     key: 'payment_status',
     label: '支付状态',
-    render: (row) => labelOf(PAYMENT_STATUS_LABELS, row.payment_status),
+    render: paymentStatusText,
+    cellClass: paymentStatusCellClass,
   },
   {
     key: 'fulfillment_status',
     label: '履约状态',
-    render: (row) => labelOf(FULFILLMENT_STATUS_LABELS, row.fulfillment_status),
+    render: fulfillmentStatusText,
+    cellClass: fulfillmentStatusCellClass,
   },
   {
     key: 'created_at',
