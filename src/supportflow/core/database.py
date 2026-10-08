@@ -22,7 +22,8 @@ class DatabaseSettings(BaseSettings):
     @property
     def database_url(self) -> URL:
         return URL.create(
-            "mysql+asyncmy", username=self.MYSQL_USER,
+            "mysql+asyncmy",
+            username=self.MYSQL_USER,
             password=self.MYSQL_PASSWORD.get_secret_value(),
             host=self.MYSQL_HOST, port=self.MYSQL_PORT,
             database=self.MYSQL_DATABASE, query={"charset": "utf8mb4"},
