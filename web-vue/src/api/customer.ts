@@ -83,6 +83,17 @@ export function fetchConversations(query: PageQuery = {}): Promise<ConversationP
 }
 
 /**
+ * DELETE /customer/conversations/{id} —— 删除会话。
+ *
+ * 连带清掉挂在它上面的退款申请和对话历史。删除正在回复的会话会被 409 挡回来。
+ */
+export function deleteConversation(conversationId: string): Promise<Record<string, never>> {
+  return http.delete<Record<string, never>>(
+    `/customer/conversations/${encodeParam(conversationId)}`,
+  )
+}
+
+/**
  * GET /customer/conversations/{id}/messages —— 历史消息。
  *
  * ⚠️ `offset=0` 拿的是**最早**的那些，不是最新的；要最新一段得先知道 total

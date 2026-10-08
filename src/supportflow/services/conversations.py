@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from supportflow.agents.graph.state import SupportState
 from supportflow.db.session import SessionLocal
 from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
+from supportflow.repository import refund as refund_repo
 from supportflow.schemas.conversations import (
     ChatMessageOut, ConversationMessagesOut, MessageTurnOut, RetrievedSourceOut,
 )
@@ -142,6 +144,45 @@ class ConversationChat:
             await db.rollback()
             return None
         return title
+
+    async def delete_conversation(self, db: AsyncSession, user_id: int, conversation_id: str) -> None:
+        """删除会话：先清退款链、再删会话行，最后删 PostgreSQL checkpoint。
+
+        归属校验放在最前面 —— 别人的会话和不存在的会话统一 404，不泄露"id 是否有效"。
+        删除顺序：
+        1. 挂在会话上的退款申请（及其审批、流水）—— `conversation_id` 是 RESTRICT 外键，
+           不先清掉就删不掉会话；
+        2. 会话行本身（MySQL）；
+        3. PostgreSQL 里这条 thread 的 checkpoint（`adelete_thread` 删三张表）。
+        MySQL 与 PG 是两个库、没有跨库事务：先删 MySQL 并提交，再删 PG；
+        PG 那步失败只影响历史记忆的清理，会话本体已删，不会留下"删不掉的会话"。
+        """
+        await _require_conversation(db, user_id, conversation_id)
+        if conversation_id in self._running:
+            raise ConversationError("本会话正在回复，请等待本轮完成后再删除", status_code=409)
+        try:
+            await refund_repo.delete_requests_for_conversation(db, conversation_id)
+            deleted = await conversation_repo.delete_conversation(db, user_id, conversation_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        # 上面 _require_conversation 已经确认存在，这里 deleted 理应为 True；留个防御以防并发删除。
+        if not deleted:
+            return
+        await self._delete_checkpoint(conversation_id)
+
+    async def _delete_checkpoint(self, conversation_id: str) -> None:
+        """删掉这条 thread 在 PostgreSQL 里的 checkpoint；失败只记日志、不向上抛。"""
+        checkpointer = getattr(self.graph, "checkpointer", None)
+        if not isinstance(checkpointer, BaseCheckpointSaver):
+            logger.warning("checkpointer 不可用，跳过 checkpoint 清理（%s）", conversation_id)
+            return
+        try:
+            await checkpointer.adelete_thread(conversation_id)
+        except Exception as exc:
+            # 会话本体已删，checkpoint 清不掉只是残留一份历史记忆，不影响业务。
+            logger.warning("清理会话 checkpoint 失败（%s）：%s", conversation_id, type(exc).__name__)
 
     async def list_messages(
         self, db: AsyncSession, user_id: int, conversation_id: str, offset: int, limit: int,

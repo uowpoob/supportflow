@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 
 import {
   createConversation,
+  deleteConversation,
   fetchConversationMessages,
   fetchConversations,
   streamConversationMessage,
@@ -527,6 +528,40 @@ function selectConversation(id: string): void {
   clearTurnState()
   selectedId.value = id
 }
+
+// ------------------------- 删除会话 -------------------------
+
+/** 正在删除的会话 id；删除期间列表上那条要有个"忙"的样子，也挡住重复点。 */
+const deletingId = ref<string | null>(null)
+
+/**
+ * 删除一条会话（列表上的垃圾桶图标触发）。
+ *
+ * 只删自己确认过的那一条；删的是当前选中的会话时，先把屏幕上的对话清掉、
+ * 选中态回到"没选"，再刷新列表 —— 否则右边还挂着已删除会话的对话。
+ */
+async function removeConversation(id: string): Promise<void> {
+  if (deletingId.value !== null) return
+  if (!window.confirm('确定删除这个会话吗？对话记录和它关联的退款申请会一起删除，且无法恢复。')) {
+    return
+  }
+  deletingId.value = id
+  try {
+    await deleteConversation(id)
+    // 删的是正在看的这条：回到"没选中"的空状态，别让已删除的对话继续挂在屏幕上。
+    if (selectedId.value === id) {
+      clearTurnState()
+      selectedId.value = null
+    }
+    // 等审批的角标集合里也清掉它，别留一个指向已删会话的角标。
+    rememberWaiting(id, false)
+    await reloadList()
+  } catch (err) {
+    sendError.value = err instanceof ApiError ? err.message : '删除失败，请重试'
+  } finally {
+    deletingId.value = null
+  }
+}
 </script>
 
 <template>
@@ -570,9 +605,10 @@ function selectConversation(id: string): void {
           v-else
           :items="conversations"
           :selected-id="selectedId"
-          :disabled="sending"
+          :disabled="sending || deletingId !== null"
           :waiting-ids="waitingIds"
           @select="selectConversation"
+          @remove="removeConversation"
         />
       </aside>
 

@@ -55,6 +55,24 @@ async def list_conversations(
     ))
 
 
+@router.delete("/conversations/{conversation_id}", response_model=Success[dict])
+async def delete_conversation(
+    conversation_id: UUID,
+    request: Request,
+    user: User = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> Success[dict]:
+    """删除自己的会话，连带清掉挂在它上面的退款申请和对话历史。
+
+    别人的会话与不存在的会话统一 404；正在回复的会话 409（先等本轮跑完）。
+    """
+    try:
+        await _chat(request).delete_conversation(db, user.id, str(conversation_id))
+    except ConversationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return Success[dict](data={})
+
+
 @router.get("/conversations/{conversation_id}/messages", response_model=Success[ConversationMessagesOut])
 async def list_messages(
     conversation_id: UUID,

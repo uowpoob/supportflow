@@ -34,6 +34,7 @@ from supportflow.repository.refund.queries import (
 )
 from supportflow.repository.refund.requests import (
     create_conversation,
+    delete_requests_for_conversation,
     find_conversation_for_user,
     insert_refund_request,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "find_request_in_statuses",
     # 写
     "create_conversation",
+    "delete_requests_for_conversation",
     "find_conversation_for_user",
     "insert_approval",
     "insert_record",

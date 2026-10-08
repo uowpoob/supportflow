@@ -114,6 +114,14 @@ const ICONS: Record<string, Shape[]> = {
     { t: 'circle', cx: 14.8, cy: 12.4, r: 1 },
     { t: 'line', x1: 9.6, y1: 15.4, x2: 14.4, y2: 15.4 },
   ],
+  // 垃圾桶：删除会话
+  trash: [
+    { t: 'path', d: 'M4.6 6.4h14.8' },
+    { t: 'path', d: 'M9.4 6.4V4.6a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8' },
+    { t: 'path', d: 'M6.4 6.4l.9 12.2a1.8 1.8 0 0 0 1.8 1.7h5.8a1.8 1.8 0 0 0 1.8-1.7l.9-12.2' },
+    { t: 'line', x1: 10, y1: 10, x2: 10, y2: 16.2 },
+    { t: 'line', x1: 14, y1: 10, x2: 14, y2: 16.2 },
+  ],
 }
 
 const props = withDefaults(

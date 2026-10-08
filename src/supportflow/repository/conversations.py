@@ -1,6 +1,6 @@
 """客户会话的数据访问；归属过滤在 SQL 中完成，事务由服务层管理。"""
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.db.base import utc_now
@@ -83,3 +83,23 @@ async def update_title(
         )
         .values(title=title)
     )
+
+
+async def delete_conversation(
+    db: AsyncSession,
+    user_id: int,
+    conversation_id: str,
+) -> bool:
+    """按归属删除会话；返回是否真的删掉了（不存在或不属于该用户返回 False）。
+
+    归属过滤在 `where` 里完成：别人的会话和不存在的情况都命中 0 行，
+    调用方无需区分。会话本身由 `id` 唯一标识，删掉它这一行即完成 MySQL 侧清理；
+    PostgreSQL checkpoint 由服务层另行处理。
+    """
+    result = await db.execute(
+        delete(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    return result.rowcount == 1

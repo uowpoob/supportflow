@@ -8,10 +8,15 @@
 值从哪来（服务端生成？取库里实付？）是业务决策，由调用方组装好对象传进来。
 """
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from supportflow.models.entities import Conversation, RefundRequest
+from supportflow.models.entities import (
+    Conversation,
+    RefundApproval,
+    RefundRecord,
+    RefundRequest,
+)
 
 
 async def find_conversation_for_user(
@@ -54,3 +59,26 @@ async def create_conversation(
 async def insert_refund_request(db: AsyncSession, request: RefundRequest) -> None:
     """把组装好的申请放进会话；提交由调用方决定。"""
     db.add(request)
+
+
+async def delete_requests_for_conversation(
+    db: AsyncSession,
+    conversation_id: str,
+) -> None:
+    """删除挂在某条会话上的退款申请，以及它们的审批记录和退款流水。
+
+    会话删除时 `refund_requests.conversation_id` 是 RESTRICT 外键，不先清掉下游
+    就删不掉会话。删除顺序必须从最下游往上：
+    审批记录、退款流水 → 退款申请本身。会话行由调用方另删。
+    这里只执行 SQL、不提交，事务边界归服务层。
+    """
+    request_ids = (
+        await db.scalars(
+            select(RefundRequest.id).where(RefundRequest.conversation_id == conversation_id)
+        )
+    ).all()
+    if not request_ids:
+        return
+    await db.execute(delete(RefundApproval).where(RefundApproval.refund_request_id.in_(request_ids)))
+    await db.execute(delete(RefundRecord).where(RefundRecord.refund_request_id.in_(request_ids)))
+    await db.execute(delete(RefundRequest).where(RefundRequest.id.in_(request_ids)))

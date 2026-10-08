@@ -143,6 +143,7 @@ export const http = {
       method: 'POST',
       body: payload === undefined ? undefined : JSON.stringify(payload),
     }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 }
 
 /**
