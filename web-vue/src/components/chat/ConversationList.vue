@@ -112,6 +112,10 @@ function timeLabel(value: string): string {
   opacity: 1;
 }
 
+.side-list__row:focus-within .side-list__remove {
+  opacity: 1;
+}
+
 .side-list__remove:hover:not(:disabled) {
   background: #fdecec;
   color: var(--danger);

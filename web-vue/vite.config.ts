@@ -5,8 +5,7 @@ import { defineConfig } from 'vite'
 // 开发期由 Vite 把 /api 代理到 FastAPI，浏览器只看到同一个源，
 // 因此不需要后端开 CORS，也不会有跨域 Cookie 的问题。
 //
-// ⚠️ 端口用 5174，不是 5173 —— React 版（web/）占着 5173，
-// 两个 dev server 同时跑时端口不能撞（`strictPort: true` 撞了会直接启动失败）。
+// 开发服务使用 4173；strictPort 避免端口占用时自动切换地址。
 // ⚠️ 临时：8000 被 Windows 端口保留段占着绑不上，后端改跑 8080。
 // 等 `net stop winnat && net start winnat` 修好 8000，把这里改回 8000 即可。
 const BACKEND = 'http://127.0.0.1:8080'
@@ -17,7 +16,7 @@ export default defineConfig({
     // 显式绑 IPv4：默认值在 Windows 上只监听 [::1]，
     // 会导致 http://127.0.0.1:5174 连不上（只有 localhost 能开）
     host: '127.0.0.1',
-    port: 5174,
+    port: 4173,
     strictPort: true,
     proxy: {
       '/api': {

@@ -38,12 +38,21 @@ const props = defineProps<{
 }>()
 
 const scroller = ref<HTMLElement | null>(null)
+const emit = defineEmits<{ suggest: [text: string] }>()
+const suggestions = [
+  { icon: 'box', title: '查询订单', text: '帮我查询最近的订单' },
+  { icon: 'search', title: '了解售后政策', text: '我想了解商品的退换货政策' },
+  { icon: 'receipt', title: '申请退款', text: '我想申请退款，需要满足什么条件？' },
+]
 
 /** 滚到底。`nextTick` 不能省：要等 DOM 按新数据更新完，`scrollHeight` 才是新高度。 */
 async function scrollToBottom(): Promise<void> {
   await nextTick()
   const element = scroller.value
-  if (element) element.scrollTop = element.scrollHeight
+  if (element) {
+    const hasContent = props.messages.length > 0 || props.optimistic || props.pending || props.streaming || props.runningElsewhere
+    element.scrollTop = hasContent ? element.scrollHeight : 0
+  }
 }
 
 // 消息一变就滚到底 —— 最新的那条总在视野里。
@@ -62,12 +71,20 @@ onMounted(scrollToBottom)
 
 <template>
   <div ref="scroller" class="chat-thread">
-    <p
+    <div
       v-if="messages.length === 0 && !optimistic && !pending && !streaming && !runningElsewhere"
-      class="muted chat-thread__hint"
+      class="chat-welcome"
     >
-      这个会话还没有消息。在下面提问，助手会先看你的订单和退款情况，再决定要不要查售后政策。
-    </p>
+      <span class="chat-welcome__icon"><AppIcon name="robot" :size="32" /></span>
+      <span class="eyebrow">你的智能售后助手</span>
+      <h3>有什么可以帮你？</h3>
+      <p>查询订单、解答售后疑问、协助退款申请。<br />从一个问题开始，我会帮你理清下一步。</p>
+      <div class="chat-suggestions">
+        <button v-for="item in suggestions" :key="item.title" type="button" class="suggestion" @click="emit('suggest', item.text)">
+          <AppIcon :name="item.icon" :size="20" /><strong>{{ item.title }}</strong><span>{{ item.text }}</span><i aria-hidden="true">↗</i>
+        </button>
+      </div>
+    </div>
 
     <!-- `:key` 用消息 id 而不是下标：追加消息时下标会整体挪位，Vue 会认错元素。 -->
     <div

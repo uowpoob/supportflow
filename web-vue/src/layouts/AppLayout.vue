@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '../api/client'
@@ -8,12 +8,13 @@ import { useAuth } from '../auth/useAuth'
 import AppIcon from '../components/common/AppIcon.vue'
 import type { NavItem } from './nav'
 
-defineProps<{ nav: NavItem[] }>()
+const props = defineProps<{ nav: NavItem[] }>()
 
 const { user, signOut, signingOut } = useAuth()
 const router = useRouter()
 const route = useRoute()
 const signOutError = ref<string | null>(null)
+const activeLabel = computed(() => props.nav.find(isActive)?.label ?? '工作台')
 
 /**
  * 当前是否停在这一项上。
@@ -44,28 +45,36 @@ async function handleSignOut() {
 
 <template>
   <div class="app-shell">
+    <aside class="app-sidebar">
+      <RouterLink class="sidebar-brand" :to="nav[0]?.to ?? '/'" aria-label="SupportFlow 首页">
+        <span class="topbar__logo" aria-hidden="true"><AppIcon name="chat" :size="23" /></span>
+        <span><strong>SupportFlow</strong><small>让售后更简单</small></span>
+      </RouterLink>
+      <p class="sidebar-caption">{{ user?.role === 'admin' ? '管理工作台' : '客户工作台' }}</p>
+      <nav class="sidebar-nav" aria-label="主导航">
+        <RouterLink
+          v-for="item in nav" :key="item.to" :to="item.to"
+          :class="isActive(item) ? 'navlink navlink--active' : 'navlink'"
+          :aria-current="isActive(item) ? 'page' : undefined"
+        >
+          <AppIcon v-if="item.icon" :name="item.icon" :size="19" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </nav>
+      <div class="sidebar-note">
+        <span class="sidebar-note__icon"><AppIcon name="robot" :size="22" /></span>
+        <strong>{{ user?.role === 'admin' ? '每一步，都有据可查' : '售后问题，随时咨询' }}</strong>
+        <p>{{ user?.role === 'admin' ? '从申请到退款，轻松跟进处理进度。' : '查询订单、了解政策，让助手帮你处理。' }}</p>
+      </div>
+      <div class="sidebar-footer">SupportFlow · 智能售后助手</div>
+    </aside>
+    <div class="app-workspace">
     <header class="topbar">
-      <!-- .topbar__inner 走和正文一样的总宽度：商标、用户名跟下面的卡片左右对齐。 -->
       <div class="topbar__inner">
-        <div class="topbar__brand">
-          <span class="topbar__logo" aria-hidden="true">SF</span>
-          <span class="topbar__title">SupportFlow</span>
-        </div>
-
-        <nav class="topbar__nav" aria-label="主导航">
-          <RouterLink
-            v-for="item in nav"
-            :key="item.to"
-            :to="item.to"
-            :class="isActive(item) ? 'navlink navlink--active' : 'navlink'"
-          >
-            <AppIcon v-if="item.icon" :name="item.icon" :size="16" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
-        </nav>
-
+        <div class="topbar__breadcrumb"><span>工作台</span><span aria-hidden="true">/</span><strong>{{ activeLabel }}</strong></div>
         <div class="topbar__user">
           <template v-if="user">
+            <span class="user-avatar" aria-hidden="true">{{ user.username.slice(0, 1).toUpperCase() }}</span>
             <span class="userchip">
               <span class="userchip__name">{{ user.username }}</span>
               <span class="userchip__role" :class="`userchip__role--${user.role}`">
@@ -92,5 +101,6 @@ async function handleSignOut() {
       </div>
       <RouterView />
     </main>
+    </div>
   </div>
 </template>

@@ -104,7 +104,7 @@ Milvus 官方需要连带 MinIO 和 etcd 一共三个容器，装法见
 
 `web-vue/`（Vue 3）是当前使用的版本；`web/`（React 初版）已于 2026-09-18 从 git 索引移除 ——
 只留在工作区，不再参与版本管理。Vue 版类型检查和生产构建均通过，开发服务器为
-`http://127.0.0.1:5174`，代理目标为后端 8080。先启动后端，再另开终端执行
+`http://127.0.0.1:4173`，代理目标为后端 8080。先启动后端，再另开终端执行
 `cd web-vue`、`npm ci`（首次安装）、`npm run dev`。
 
 页面与组件已按域分包：`pages/{auth,customer,admin}`、`components/{common,orders,refunds}`。

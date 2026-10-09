@@ -565,10 +565,11 @@ async function removeConversation(id: string): Promise<void> {
 </script>
 
 <template>
-  <div class="stack">
+  <div class="stack customer-home">
     <header class="page-head">
-      <h2 class="page-head__title">你好，{{ user?.username }}</h2>
-      <p class="page-head__desc">可以查询订单、咨询售后政策、提交退款申请。</p>
+      <div class="eyebrow">CUSTOMER WORKSPACE</div>
+      <h2 class="page-head__title">你好，{{ user?.username }} <span class="greeting-dot" aria-hidden="true">✦</span></h2>
+      <p class="page-head__desc">售后事务，在这里轻松解决。</p>
     </header>
 
     <div class="card-grid">
@@ -576,11 +577,13 @@ async function removeConversation(id: string): Promise<void> {
         <span class="entry-card__icon"><AppIcon name="box" :size="20" /></span>
         <span class="entry-card__title">我的订单</span>
         <span class="entry-card__desc">查看订单详情与退款资格</span>
+        <span class="entry-card__arrow" aria-hidden="true">↗</span>
       </RouterLink>
       <RouterLink class="entry-card entry-card--amber" to="/customer/refund-requests">
         <span class="entry-card__icon"><AppIcon name="receipt" :size="20" /></span>
         <span class="entry-card__title">我的退款申请</span>
         <span class="entry-card__desc">查看申请进度与审批意见</span>
+        <span class="entry-card__arrow" aria-hidden="true">↗</span>
       </RouterLink>
     </div>
 
@@ -589,7 +592,8 @@ async function removeConversation(id: string): Promise<void> {
         <!-- 这里原来有个「+ 新建」按钮，已经去掉了：会话改成"发第一句话时自动建"
              （见 `send`），用户不用先操心会话从哪来，也就没有"一直点新建"这回事。 -->
         <div class="side-head">
-          <span class="side-head__label"><AppIcon name="chat" :size="16" />会话</span>
+          <span class="side-head__label"><AppIcon name="chat" :size="16" />历史会话</span>
+          <span class="side-count">{{ conversations.length }}</span>
         </div>
 
         <div v-if="listState === 'loading'" class="pane-pad">
@@ -613,6 +617,11 @@ async function removeConversation(id: string): Promise<void> {
       </aside>
 
       <section class="chat-layout__main">
+        <div class="chat-head">
+          <span class="chat-head__avatar"><AppIcon name="robot" :size="21" /></span>
+          <div><strong>SupportFlow 助手</strong><span>订单 · 政策 · 退款</span></div>
+          <span class="chat-head__badge">智能售后</span>
+        </div>
         <!-- 还没选中会话也直接给一个空聊天区（像 ChatGPT 那样：进来就能打字，
              不用先点左边列表）。发送时 `send` 会先建一个会话、再把这句发进去。 -->
         <ChatThread
@@ -622,6 +631,7 @@ async function removeConversation(id: string): Promise<void> {
           :optimistic="optimistic"
           :streaming="streamingText"
           :running-elsewhere="showRunning"
+          @suggest="draft = $event"
         />
 
         <div v-else-if="loadingMessages" class="pane-pad">
@@ -642,6 +652,7 @@ async function removeConversation(id: string): Promise<void> {
           :optimistic="optimistic"
           :streaming="streamingText"
           :running-elsewhere="showRunning"
+          @suggest="draft = $event"
         />
 
         <RetrievedSources v-if="turnStatus" :status="turnStatus" :sources="turnSources" />
@@ -686,6 +697,7 @@ async function removeConversation(id: string): Promise<void> {
           <input
             v-model="draft"
             class="composer__input"
+            aria-label="售后咨询问题"
             :disabled="sending || waiting || runningElsewhere"
             :placeholder="inputPlaceholder"
           />
@@ -694,6 +706,7 @@ async function removeConversation(id: string): Promise<void> {
             <span>{{ sending ? (creating ? '创建中…' : '回复中…') : '发送' }}</span>
           </button>
         </form>
+        <div class="composer-note">回复仅供参考，退款资格与处理结果以实际订单和审批记录为准。</div>
       </section>
     </div>
   </div>
