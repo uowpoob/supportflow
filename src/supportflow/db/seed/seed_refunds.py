@@ -1,47 +1,8 @@
-"""创建本地演示退款数据：python -m supportflow.db.seed.seed_refunds。
+"""小米演示退款：20条申请，四种申请状态各5条。
 
-前提：先跑过 python -m supportflow.db.seed.seed_users 和 seed_orders
-（本模块按 order_no 找订单，金额也直接取自订单实付）。
-
-为什么订单之外还要单独一个种子：退款申请的状态**不可能**只靠 orders 表造出来。
-`evaluate_eligibility` 里有三个分支（已有申请 / 已批准 / 已退款）必须库里真的存在
-一条申请才会命中，管理侧的"待办、审批记录、退款流水"三个页面也一样 ——
-不灌这些数据，这些页面在演示时永远是空的，看起来就像没做完。
-
-和 seed_orders 一样守两条约束：
-1. 可重复运行 —— `request_key` 是写死的 `40992851773300NN`，已存在就跳过。
-2. 时间字段相对当前时间算，并且**必须晚于该订单的签收时间** ——
-   签收之前不可能发起退款申请，这条也有自检。
-
-金额一律取 `orders.paid_amount_cents`，和线上 `create_refund_request` 的规则一致 ——
-演示数据也不该走一条"可以手填金额"的旁路，否则测出来的东西和线上不是一回事。
-
-## 覆盖面
-
-12 条申请把四个人生阶段和两个执行结果铺满（括号里是申请状态 / 执行状态）：
-
-    待审批 3 条 ──── R04 C1-15、R06 C2-02、R10 C2-08
-                      → 管理侧"待办"页有东西可批，客户侧显示"待审批"
-    已批准 3 条 ──── R02 C1-11、R07 C2-03（processing 打款中）
-                      R09 C2-05（succeeded 已打款）
-    已拒绝 3 条 ──── R05 C1-12、R08 C2-04、R12 C2-10
-                      → 名额已释放：前两单**仍然可以再次申请**（判定为 ok），
-                        最后一单本身已超期（判定为 window_expired）
-    已退款 3 条 ──── R01 C1-04、R03 C1-14、R11 C2-11
-                      → 完整闭环，对应订单支付状态已翻成 refunded
-
-审批记录 9 条（待审批的 3 条还没有审批），退款流水 6 条（只有已批准/已退款才有）。
-**没有 failed 流水**：演示库不放"打款失败"这类异常状态，失败重试由单元测试覆盖。
-
-## 编号规则
-
-- `request_key`：16 位纯数字，号段 `409928517733` + 4 位序号，例如 `4099285177330001`。
-- `refund_no`：16 位纯数字，号段 `711845902664` + 序号，后 4 位与申请号一致（流水由申请派生）。
-- `RefundSpec.label`：人看的短名，只用于注释和打印，不落库。
-
-⚠️ 线上 `services/refunds/requests.py` 里 `request_key` / `refund_no` 都是 `uuid4()`。
-演示库用可读的号段只是为了让界面好看，两者的**唯一性要求是一样的**；
-真要统一，改的应该是线上那两个生成点，而不是把演示数据改成 UUID。
+15条审批，10条流水（5条打款中、5条成功），不模拟打款失败或重试。
+申请、审批、流水和订单状态一致；整单金额取订单实付。
+完整刷新用 python -m supportflow.db.seed.seed_demo --refresh。
 """
 
 import asyncio
@@ -50,6 +11,7 @@ from datetime import datetime, timedelta
 from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.db.base import utc_now
 from supportflow.db.session import SessionLocal, engine
@@ -137,7 +99,7 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
             created_ago=timedelta(days=20),
             succeeded_ago=timedelta(days=20),
         ),
-        note="完整闭环（大额笔记本 5499.00 元），订单已退款",
+        note="完整闭环（大额笔记本 4499.00 元），订单已退款",
     ),
     RefundSpec(
         key_no=11,
@@ -203,8 +165,8 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         key_no=9,
         order_no="1270189029630005",
         label="C2-05",
-        status=RefundStatus.APPROVED,
-        reason="吸盘固定不住，过减速带就掉",
+        status=RefundStatus.REFUNDED,
+        reason="手机放上车充后无法充电，换另一部支持无线充电的手机也不行",
         created_ago=timedelta(days=8),
         approval=ApprovalSpec(
             decision=ApprovalDecision.APPROVED,
@@ -217,7 +179,7 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
             created_ago=timedelta(days=7),
             succeeded_ago=timedelta(days=6),
         ),
-        note="已批准、打款成功：覆盖 succeeded 状态（申请仍是 approved）",
+        note="车充退款成功：申请、订单均已退款，流水成功",
     ),
     RefundSpec(
         key_no=4,
@@ -265,11 +227,11 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         order_no="1270189029630004",
         label="C2-04",
         status=RefundStatus.REJECTED,
-        reason="腕托有异味，闻着不舒服",
+        reason="温湿度计显示与空调设定温度不一致，要求退款",
         created_ago=timedelta(days=5),
         approval=ApprovalSpec(
             decision=ApprovalDecision.REJECTED,
-            comment="经核实非商品质量问题，不符合退款条件",
+            comment="检测读数正常，空调设定温度不等于室内实测温度，本次质量问题申请不予批准",
             decided_ago=timedelta(days=4),
         ),
         note="被拒绝：名额已释放，这一单**仍然可以再次提交申请**（判定为 ok）",
@@ -283,10 +245,60 @@ DEMO_REFUNDS: tuple[RefundSpec, ...] = (
         created_ago=timedelta(days=14),
         approval=ApprovalSpec(
             decision=ApprovalDecision.REJECTED,
-            comment="已超过签收后 14 天退款期限，不予受理",
+            comment="无质量问题且商品已有明显使用痕迹，本次申请不予批准",
             decided_ago=timedelta(days=13),
         ),
-        note="超期后提交、被拒绝：单子本身超期（判定仍是 window_expired）",
+        note="窗口内申请被拒绝，当前签收已16天，不能再申请",
+    ),
+    RefundSpec(
+        key_no=13, order_no="1260918430020017", label="C1-17",
+        status=RefundStatus.APPROVED, reason="扫拖机器人回到基站后无法自动清洗拖布", created_ago=timedelta(days=2),
+        approval=ApprovalSpec(ApprovalDecision.APPROVED, "检测确认质量问题，同意整单退款", timedelta(days=1)),
+        record=RecordSpec(RefundExecutionStatus.PROCESSING, 1, timedelta(days=1), None),
+        note="机器人：整单退款已批准，打款中",
+    ),
+    RefundSpec(
+        key_no=14, order_no="1260918430020018", label="C1-18",
+        status=RefundStatus.PENDING, reason="电热水瓶按出水键不出水，申请厨房家电组合整单退货退款", created_ago=timedelta(days=1),
+        note="两种厨房家电：整单退款待审批",
+    ),
+    RefundSpec(
+        key_no=15, order_no="1260918430020019", label="C1-19",
+        status=RefundStatus.REJECTED, reason="风扇开启摇头后有轻微电机声，认为是质量问题", created_ago=timedelta(days=2),
+        approval=ApprovalSpec(ApprovalDecision.REJECTED, "检测运行正常，轻微工作声不构成质量故障，本次申请拒绝", timedelta(days=1)),
+        note="拒绝后可再次申请",
+    ),
+    RefundSpec(
+        key_no=16, order_no="1260918430020020", label="C1-20",
+        status=RefundStatus.REFUNDED, reason="两件移动电源均无法正常充电，连同数据线一起退货", created_ago=timedelta(days=7),
+        approval=ApprovalSpec(ApprovalDecision.APPROVED, "检测确认质量问题，同意整单退款", timedelta(days=6)),
+        record=RecordSpec(RefundExecutionStatus.SUCCEEDED, 1, timedelta(days=6), timedelta(days=6)),
+        note="多商品多件：整单退款成功",
+    ),
+    RefundSpec(
+        key_no=17, order_no="1270189029630013", label="C2-13",
+        status=RefundStatus.APPROVED, reason="洗衣机运行时持续报错，按说明排查后仍无法洗涤", created_ago=timedelta(days=4),
+        approval=ApprovalSpec(ApprovalDecision.APPROVED, "检测确认质量问题，同意整单退款", timedelta(days=3)),
+        record=RecordSpec(RefundExecutionStatus.PROCESSING, 1, timedelta(days=3), None),
+        note="洗衣机：退款已批准，打款中",
+    ),
+    RefundSpec(
+        key_no=18, order_no="1270189029630014", label="C2-14",
+        status=RefundStatus.APPROVED, reason="空调安装后无法正常制冷，售后检测确认设备故障", created_ago=timedelta(days=4),
+        approval=ApprovalSpec(ApprovalDecision.APPROVED, "检测确认质量问题，同意整单退款", timedelta(days=3)),
+        record=RecordSpec(RefundExecutionStatus.PROCESSING, 1, timedelta(days=3), None),
+        note="空调：退款已批准，打款中",
+    ),
+    RefundSpec(
+        key_no=19, order_no="1270189029630015", label="C2-15",
+        status=RefundStatus.PENDING, reason="扫拖机器人清水箱装好后持续提示缺水", created_ago=timedelta(days=1),
+        note="机器人：待审批",
+    ),
+    RefundSpec(
+        key_no=20, order_no="1270189029630016", label="C2-16",
+        status=RefundStatus.REJECTED, reason="加湿器使用香薰液后堵塞，要求按质量问题退款", created_ago=timedelta(days=3),
+        approval=ApprovalSpec(ApprovalDecision.REJECTED, "检测发现非规定介质导致堵塞，本次质量问题申请拒绝", timedelta(days=2)),
+        note="使用不当被拒绝，仍在申请窗口内",
     ),
 )
 
@@ -325,6 +337,9 @@ def _validate() -> None:
     """
     seen_orders: set[str] = set()
     seen_numbers: set[int] = set()
+    from supportflow.db.seed.seed_orders import DEMO_ORDERS
+
+    orders = {spec.order_no: spec for spec in DEMO_ORDERS}
 
     for spec in DEMO_REFUNDS:
         if spec.order_no in seen_orders:
@@ -339,8 +354,8 @@ def _validate() -> None:
             raise ValueError(f"{spec.order_no}: 必须给一个 label（如 C1-04）")
 
         # 待审批的申请不可能已经有审批结论。
-        if spec.status is RefundStatus.PENDING and spec.approval is not None:
-            raise ValueError(f"{spec.order_no}: 还是待审批，不该有审批记录")
+        if spec.status is RefundStatus.PENDING and (spec.approval is not None or spec.record is not None):
+            raise ValueError(f"{spec.order_no}: 待审批不该有审批记录或退款流水")
 
         # 有审批结论（批准/拒绝）就必须有审批记录，否则管理侧的审批记录页会缺行。
         if spec.status in (RefundStatus.APPROVED, RefundStatus.REFUNDED, RefundStatus.REJECTED):
@@ -358,9 +373,9 @@ def _validate() -> None:
         if spec.status is RefundStatus.REJECTED and spec.record is not None:
             raise ValueError(f"{spec.order_no}: 被拒绝的申请不该产生退款流水")
 
-        # 已批准的申请必须已经产生了流水（打款中或已打款）。
+        # 已批准的演示申请产生打款中流水；成功后申请状态必须变成 refunded。
         if spec.status is RefundStatus.APPROVED and spec.record is None:
-            raise ValueError(f"{spec.order_no}: 已批准就该有退款流水（processing 或 succeeded）")
+            raise ValueError(f"{spec.order_no}: 已批准就该有 processing 退款流水")
 
         # 申请时间早于审批时间就是错的（先去申请，才有人批）。
         if spec.approval is not None and spec.approval.decided_ago > spec.created_ago:
@@ -369,160 +384,182 @@ def _validate() -> None:
                 "（decided_ago 应小于 created_ago）"
             )
 
+        order = orders[spec.order_no]
+        if order.label != spec.label or order.delivered_ago is None:
+            raise ValueError(f"{spec.label}: 退款必须关联同标签的已签收订单")
+        if not timedelta(0) <= spec.created_ago <= order.delivered_ago:
+            raise ValueError(f"{spec.label}: 申请时间必须在签收之后、当前时间之前")
+        if order.delivered_ago - spec.created_ago > timedelta(days=14):
+            raise ValueError(f"{spec.label}: 申请提交时已超过14天窗口")
+        payment = PaymentStatus.REFUNDED if spec.status is RefundStatus.REFUNDED else PaymentStatus.PAID
+        if order.payment_status is not payment:
+            raise ValueError(f"{spec.label}: 订单与退款状态不一致")
+        if spec.approval:
+            decision = ApprovalDecision.REJECTED if spec.status is RefundStatus.REJECTED else ApprovalDecision.APPROVED
+            if spec.approval.decision is not decision or spec.approval.decided_ago < timedelta(0):
+                raise ValueError(f"{spec.label}: 审批结论或时间不正确")
+        if spec.record:
+            record = spec.record
+            expected = RefundExecutionStatus.SUCCEEDED if spec.status is RefundStatus.REFUNDED else RefundExecutionStatus.PROCESSING
+            if record.status is not expected or record.attempt_count != 1:
+                raise ValueError(f"{spec.label}: 仅模拟一次执行的打款中或成功流水")
+            if spec.approval is None or not timedelta(0) <= record.created_ago <= spec.approval.decided_ago:
+                raise ValueError(f"{spec.label}: 流水时间必须在批准后")
+            if record.status is RefundExecutionStatus.SUCCEEDED:
+                if record.succeeded_ago is None or not timedelta(0) <= record.succeeded_ago <= record.created_ago:
+                    raise ValueError(f"{spec.label}: 成功流水必须有正确的成功时间")
+            elif record.succeeded_ago is not None:
+                raise ValueError(f"{spec.label}: 打款中的流水不能有成功时间")
+
+
+async def seed(session: AsyncSession, now: datetime):
+    """在调用方事务内写入，申请号稳定，已存在的申请跳过。"""
+    _validate()
+    created, skipped = [], []
+    admin_id = await session.scalar(
+        select(User.id).where(User.username == "admin")
+    )
+    if admin_id is None:
+        raise RuntimeError(
+            "Missing demo account: admin; "
+            "run python -m supportflow.db.seed.seed_users first"
+        )
+
+    orders = {
+        order.order_no: order
+        for order in await session.scalars(
+            select(Order).where(
+                Order.order_no.in_([spec.order_no for spec in DEMO_REFUNDS])
+            )
+        )
+    }
+    existing_keys = set(
+        await session.scalars(
+            select(RefundRequest.request_key).where(
+                RefundRequest.request_key.in_(
+                    [_request_key(s.key_no) for s in DEMO_REFUNDS]
+                )
+            )
+        )
+    )
+
+    for spec in DEMO_REFUNDS:
+        if _request_key(spec.key_no) in existing_keys:
+            skipped.append(spec)
+            print(f"Skipped existing refund request: {_request_key(spec.key_no)}")
+            continue
+
+        order = orders.get(spec.order_no)
+        if order is None:
+            raise RuntimeError(
+                f"Missing demo order: {spec.order_no} ({spec.label}); "
+                "run python -m supportflow.db.seed.seed_orders first"
+            )
+
+        # 申请必须发生在签收之后 —— 签收前不存在"退款窗口"。
+        if order.delivered_at is not None:
+            created_at = _at(now, spec.created_ago)
+            if created_at < order.delivered_at:
+                raise ValueError(
+                    f"{spec.order_no}: 申请时间早于签收时间"
+                    f"（签收 {order.delivered_at}，申请 {created_at}）"
+                )
+
+        if spec.status is RefundStatus.REFUNDED and (
+            order.payment_status is not PaymentStatus.REFUNDED
+        ):
+            raise ValueError(
+                f"{spec.order_no}: 声明申请已退款完成，"
+                f"但订单支付状态是 {order.payment_status.value}"
+            )
+        if spec.status is not RefundStatus.REFUNDED and (
+            order.payment_status is not PaymentStatus.PAID
+        ):
+            raise ValueError(
+                f"{spec.order_no}: 未走完退款的申请要求订单是已支付状态，"
+                f"实际是 {order.payment_status.value}"
+            )
+
+        # 退款申请外键指向会话：真实流程由 create_refund_request 建，这里补一条，标题用订单号便于对号。
+        conversation_id = _conversation_id(spec.order_no)
+        conversation = await session.get(Conversation, conversation_id)
+        if conversation is None:
+            conversation = Conversation(id=conversation_id, user_id=order.user_id)
+            session.add(conversation)
+        if conversation.user_id != order.user_id:
+            raise ValueError(f"{spec.label}: 演示售后会话归属不匹配")
+        conversation.title = f"{order.order_no} {spec.reason[:36]}"
+        conversation.created_at = _at(now, spec.created_ago)
+        conversation.updated_at = _at(now, spec.created_ago)
+
+        await session.flush()
+
+        latest_ago = min(
+            spec.created_ago,
+            spec.approval.decided_ago if spec.approval else spec.created_ago,
+            spec.record.succeeded_ago if spec.record and spec.record.succeeded_ago is not None else spec.created_ago,
+        )
+        if spec.status is RefundStatus.REFUNDED:
+            order.updated_at = _at(now, latest_ago)
+
+        request = RefundRequest(
+            request_key=_request_key(spec.key_no),
+            order_id=order.id,
+            conversation_id=conversation_id,
+            # 金额取订单实付，和线上规则一致：请求体里没有金额这个字段。
+            amount_cents=order.paid_amount_cents,
+            reason_original=spec.reason,
+            reason_category="quality_issue",
+            status=spec.status,
+            created_at=_at(now, spec.created_ago),
+            updated_at=_at(now, latest_ago),
+        )
+        session.add(request)
+        # flush 拿到自增 id，审批与流水才能引用它（此时还没提交）。
+        await session.flush()
+
+        if spec.approval is not None:
+            session.add(
+                RefundApproval(
+                    refund_request_id=request.id,
+                    admin_id=admin_id,
+                    decision=spec.approval.decision,
+                    comment=spec.approval.comment,
+                    created_at=_at(now, spec.approval.decided_ago),
+                    updated_at=_at(now, spec.approval.decided_ago),
+                )
+            )
+
+        if spec.record is not None:
+            session.add(
+                RefundRecord(
+                    refund_request_id=request.id,
+                    refund_no=_refund_no(spec.key_no),
+                    amount_cents=order.paid_amount_cents,
+                    status=spec.record.status,
+                    attempt_count=spec.record.attempt_count,
+                    last_error=None,
+                    succeeded_at=(
+                        None
+                        if spec.record.succeeded_ago is None
+                        else _at(now, spec.record.succeeded_ago)
+                    ),
+                    created_at=_at(now, spec.record.created_ago),
+                    updated_at=_at(now, spec.record.succeeded_ago or spec.record.created_ago),
+                )
+            )
+
+        created.append(spec)
+
+    await session.flush()
+    return created, skipped
+
 
 async def main() -> None:
-    _validate()
-    now = utc_now()
-    created: list[RefundSpec] = []
-    skipped: list[RefundSpec] = []
-
     try:
-        async with SessionLocal() as session:
-            async with session.begin():
-                admin_id = await session.scalar(
-                    select(User.id).where(User.username == "admin")
-                )
-                if admin_id is None:
-                    raise RuntimeError(
-                        "Missing demo account: admin; "
-                        "run python -m supportflow.db.seed.seed_users first"
-                    )
-
-                orders = {
-                    order.order_no: order
-                    for order in await session.scalars(
-                        select(Order).where(
-                            Order.order_no.in_([spec.order_no for spec in DEMO_REFUNDS])
-                        )
-                    )
-                }
-                existing_keys = set(
-                    await session.scalars(
-                        select(RefundRequest.request_key).where(
-                            RefundRequest.request_key.in_(
-                                [_request_key(s.key_no) for s in DEMO_REFUNDS]
-                            )
-                        )
-                    )
-                )
-
-                for spec in DEMO_REFUNDS:
-                    if _request_key(spec.key_no) in existing_keys:
-                        skipped.append(spec)
-                        print(f"Skipped existing refund request: {_request_key(spec.key_no)}")
-                        continue
-
-                    order = orders.get(spec.order_no)
-                    if order is None:
-                        raise RuntimeError(
-                            f"Missing demo order: {spec.order_no} ({spec.label}); "
-                            "run python -m supportflow.db.seed.seed_orders first"
-                        )
-
-                    # 申请必须发生在签收之后 —— 签收前不存在"退款窗口"。
-                    if order.delivered_at is not None:
-                        created_at = _at(now, spec.created_ago)
-                        if created_at < order.delivered_at:
-                            raise ValueError(
-                                f"{spec.order_no}: 申请时间早于签收时间"
-                                f"（签收 {order.delivered_at}，申请 {created_at}）"
-                            )
-
-                    if spec.status is RefundStatus.REFUNDED and (
-                        order.payment_status is not PaymentStatus.REFUNDED
-                    ):
-                        raise ValueError(
-                            f"{spec.order_no}: 声明申请已退款完成，"
-                            f"但订单支付状态是 {order.payment_status.value}"
-                        )
-                    if spec.status is not RefundStatus.REFUNDED and (
-                        order.payment_status is not PaymentStatus.PAID
-                    ):
-                        raise ValueError(
-                            f"{spec.order_no}: 未走完退款的申请要求订单是已支付状态，"
-                            f"实际是 {order.payment_status.value}"
-                        )
-
-                    # 退款申请外键指向会话：真实流程由 create_refund_request 建，这里补一条，标题用订单号便于对号。
-                    conversation_id = _conversation_id(spec.order_no)
-                    conversation = await session.get(Conversation, conversation_id)
-                    if conversation is None:
-                        session.add(
-                            Conversation(
-                                id=conversation_id,
-                                user_id=order.user_id,
-                                title=f"订单 {spec.order_no} 售后咨询",
-                                created_at=_at(now, spec.created_ago),
-                                updated_at=_at(now, spec.created_ago),
-                            )
-                        )
-
-                    request = RefundRequest(
-                        request_key=_request_key(spec.key_no),
-                        order_id=order.id,
-                        conversation_id=conversation_id,
-                        # 金额取订单实付，和线上规则一致：请求体里没有金额这个字段。
-                        amount_cents=order.paid_amount_cents,
-                        reason_original=spec.reason,
-                        reason_category=None,
-                        status=spec.status,
-                        created_at=_at(now, spec.created_ago),
-                        updated_at=_at(
-                            now,
-                            spec.approval.decided_ago
-                            if spec.approval is not None
-                            else spec.created_ago,
-                        ),
-                    )
-                    session.add(request)
-                    # flush 拿到自增 id，审批与流水才能引用它（此时还没提交）。
-                    await session.flush()
-
-                    if spec.approval is not None:
-                        session.add(
-                            RefundApproval(
-                                refund_request_id=request.id,
-                                admin_id=admin_id,
-                                decision=spec.approval.decision,
-                                comment=spec.approval.comment,
-                                created_at=_at(now, spec.approval.decided_ago),
-                                updated_at=_at(now, spec.approval.decided_ago),
-                            )
-                        )
-
-                    if spec.record is not None:
-                        session.add(
-                            RefundRecord(
-                                refund_request_id=request.id,
-                                refund_no=_refund_no(spec.key_no),
-                                amount_cents=order.paid_amount_cents,
-                                status=spec.record.status,
-                                attempt_count=spec.record.attempt_count,
-                                last_error=None,
-                                succeeded_at=(
-                                    None
-                                    if spec.record.succeeded_ago is None
-                                    else _at(now, spec.record.succeeded_ago)
-                                ),
-                                created_at=_at(now, spec.record.created_ago),
-                                updated_at=_at(now, spec.record.created_ago),
-                            )
-                        )
-
-                    created.append(spec)
-
-        approvals = sum(1 for spec in created if spec.approval is not None)
-        records = sum(1 for spec in created if spec.record is not None)
-        print(
-            f"Refund requests: created {len(created)}, skipped {len(skipped)}; "
-            f"{approvals} approval(s), {records} record(s)."
-        )
-        for spec in created:
-            print(
-                f"  {spec.label} request_key={_request_key(spec.key_no)} "
-                f"order={spec.order_no} status={spec.status.value} "
-                f"reason={spec.reason} | {spec.note}"
-            )
+        async with SessionLocal() as session, session.begin():
+            created, skipped = await seed(session, utc_now())
+        print(f"Refund requests: created {len(created)}, skipped {len(skipped)}")
     finally:
         await engine.dispose()
 

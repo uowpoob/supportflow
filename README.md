@@ -97,8 +97,29 @@ LANGGRAPH_PG_DSN=postgresql://langgraph_user:<上面的密码>@127.0.0.1:5432/la
 Milvus 官方需要连带 MinIO 和 etcd 一共三个容器，装法见
 [Milvus 官方文档](https://milvus.io/docs/install_standalone-docker.md)。
 `.env` 里配 `MILVUS_URI`（默认 `http://127.0.0.1:19530`）、`DB_NAME`、`COLLECTION`。
-灌语料用 `python -m supportflow.retrieval.resource2chunks`
-（读 `src/supportflow/retrieval/` 下的 md → 按条款切分 → 向量化 → 写入 Milvus，自带行数校验）。
+知识资料放在 `src/supportflow/retrieval/policies/`（政策）和 `data/`（产品知识），
+递归读取 Markdown、PDF、DOCX，按标题层级和法律条款切分；DOCX 同时提取表格，
+PDF 保留来源页码。Markdown 支持 YAML 元信息。默认片段上限 1200 字符（含标题），
+长正文按句末继续切分并保留 120 字符重叠，可通过 `--chunk-size`、`--chunk-overlap` 调整。
+
+```powershell
+# 只解析和切分，不调用模型或数据库
+python -m supportflow.retrieval.resource2chunks --dry-run
+# 清空旧知识数据，重新导入 policies 和 data 全部资料
+python -m supportflow.retrieval.resource2chunks --replace
+# 更新同 ID 的片段，保留其他已有记录
+python -m supportflow.retrieval.resource2chunks
+# 只删除知识集合全部记录，保留集合结构和索引
+python -m supportflow.retrieval.resource2chunks --clear-only
+```
+
+`--replace` 先完成本地解析、全部向量生成和校验，再删除配置的
+`DB_NAME.COLLECTION` 中全部旧记录。分批写入后核对本次 ID 和集合总数，
+保留 `RetrievedChunk` 字段结构；写入不具备跨批次事务，写入失败后需重新运行。
+同名不同格式文件分别入库，文档 ID 包含目录、相对路径和扩展名，避免相互覆盖。
+扫描 PDF 没有文本层时须先 OCR；部分页面无文本时会提示对应页码。
+后端若已建立 BM25 内存索引，更新资料后需重启后端，或在该进程调用
+`clear_index_cache()`，使混合检索同步使用新资料。
 
 ## 前端
 
@@ -126,9 +147,17 @@ Milvus 官方需要连带 MinIO 和 etcd 一共三个容器，装法见
 
 存储方案：MySQL 保存业务数据与会话归属，PostgreSQL 保存 LangGraph 状态，Milvus 保存政策索引。
 
-演示数据入口：先跑 `python -m supportflow.db.seed.seed_users`，再跑 `seed_orders`
-（`--refresh` 可把已存在订单的支付/签收时间重新锚定到当前时刻），退款占位数据用 `seed_refunds`。
-把库还原到验收基线用 `.workbuddy/tools/reset_refund_state.py`。
+演示数据入口：`python -m supportflow.db.seed.seed_demo`。已有数据改成新的演示基线时运行
+`python -m supportflow.db.seed.seed_demo --refresh`，在一个事务内同步恢复订单、商品明细、
+退款申请、审批和流水，时间统一锚定到本次执行时刻。只刷新声明的演示订单；已有账号密码、
+登录会话和普通聊天保留。单独的 `seed_users` / `seed_orders` / `seed_refunds` 入口仍可使用。
+
+商品统一为小米、REDMI、米家，涵盖手机、电脑、平板、音频、配件、穿戴、网络设备和家电；
+金额均为模拟成交价。客户只有 `customer1`、`customer2`，每人 20 单；另保留 `admin` 供审批。
+40 单覆盖未支付、待发货、运输中、已签收、14 天期限内/外、多商品、多件数量和整单退款。
+20 条退款申请包含待审批、已批准、已拒绝、已退款各 5 条；配套 15 条审批和 10 条流水
+（打款中、成功各 5 条），没有打款失败或重试数据。成功时订单、申请和流水状态同步。
+核对真实数据库可运行 `.venv/Scripts/python.exe .workbuddy/tools/verify_demo_dataset.py`。
 
 下一步：补一键启动的 compose（把 MySQL / PostgreSQL / Milvus 一次装好，免去手装三个数据库）、面向服务器的部署脚本，以及 LangSmith 评测报告。
 

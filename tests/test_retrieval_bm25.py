@@ -46,7 +46,7 @@ async def test_exact_model_retrieval_preserves_shared_chunk_identity(corpus):
     results = await bm25.retrieve_bm25("wh-1000xm5", top_k=1)
     original = split_documents(load_documents((data, policies)))[1]
     assert len(results) == 1
-    assert results[0]["chunk_id"] == "sony#1"
+    assert results[0]["chunk_id"] == "data/sony.md#1"
     assert results[0]["content"] == original.page_content
     assert results[0]["source"] == "data/sony.md"
     assert results[0]["score"] > 0
@@ -56,16 +56,16 @@ async def test_exact_model_retrieval_preserves_shared_chunk_identity(corpus):
 @pytest.mark.asyncio
 async def test_ranked_results_filters_and_top_k(corpus):
     results = await bm25.retrieve_bm25("WH-1000XM5 退货", top_k=2)
-    assert {result["chunk_id"] for result in results} == {"sony#1", "returns#1"}
+    assert {result["chunk_id"] for result in results} == {"data/sony.md#1", "policies/returns.md#1"}
     assert [result["score"] for result in results] == sorted(
         [result["score"] for result in results], reverse=True,
     )
     assert len(await bm25.retrieve_bm25("WH-1000XM5 退货", top_k=1)) == 1
     filtered = await bm25.retrieve_bm25("WH-1000XM5 退货", top_k=1, category="policies")
-    assert [result["chunk_id"] for result in filtered] == ["returns#1"]
-    filtered = await bm25.retrieve_bm25("WH-1000XM5 退货", document_ids=["sony"])
-    assert [result["chunk_id"] for result in filtered] == ["sony#1"]
-    assert await bm25.retrieve_bm25("退货", category="data", document_ids=["returns"]) == []
+    assert [result["chunk_id"] for result in filtered] == ["policies/returns.md#1"]
+    filtered = await bm25.retrieve_bm25("WH-1000XM5 退货", document_ids=["data/sony.md"])
+    assert [result["chunk_id"] for result in filtered] == ["data/sony.md#1"]
+    assert await bm25.retrieve_bm25("退货", category="data", document_ids=["policies/returns.md"]) == []
     assert await bm25.retrieve_bm25("退货", document_ids=["missing"]) == []
 
 
@@ -82,7 +82,7 @@ async def test_single_document_with_negative_okapi_score_still_matches(corpus):
     loader.side_effect = lambda: load_documents((policies,))
     result = await bm25.retrieve_bm25("退货")
     assert len(result) == 1
-    assert result[0]["chunk_id"] == "returns#1"
+    assert result[0]["chunk_id"] == "policies/returns.md#1"
     assert await bm25.retrieve_bm25("WH-1000XM5") == []
 
 
@@ -96,7 +96,7 @@ async def test_index_is_cached_and_can_be_reloaded_without_leaking_mutations(cor
     (data / "charger.md").write_text("# 新充电器\n\n新型号 A9999。", encoding="utf-8")
     bm25.clear_index_cache()
     assert await bm25.retrieve_bm25("A2666") == []
-    assert (await bm25.retrieve_bm25("A9999"))[0]["chunk_id"] == "charger#overview"
+    assert (await bm25.retrieve_bm25("A9999"))[0]["chunk_id"] == "data/charger.md#overview"
     assert loader.call_count == 2
 
 

@@ -75,21 +75,17 @@ def init_milvus() -> MilvusClient:
     return client
 
 
-def upsert_chunks(
-    client: MilvusClient,
+def prepare_rows(
     chunks: list[Document],
     vectors: list[list[float]],
-) -> int:
-    """写入完整片段，以 chunk_id 更新或新增。失败后可重新运行，不自动删除旧条款。
-
-    先校验全部数据，再分批写入。批次间不具备事务原子性。
-    """
+) -> list[dict]:
+    """校验全部片段和向量；纯本地操作，可在清库前调用。"""
     from supportflow.core.config import settings
 
     if len(chunks) != len(vectors):
         raise ValueError("片段数量与向量数量不一致，取消写入")
     if not chunks:
-        return 0
+        return []
 
     rows = []
     ids: set[str] = set()
@@ -118,6 +114,32 @@ def upsert_chunks(
             "embedding_dim": settings.EMBEDDING_DIM,
         })
 
+    return rows
+
+
+def clear_chunks(client: MilvusClient) -> int:
+    """删除配置知识集合的所有记录，保留集合、索引及其他数据库。"""
+    from supportflow.core.config import settings
+
+    query = dict(collection_name=settings.COLLECTION, filter="",
+                 output_fields=["count(*)"], consistency_level="Strong")
+    before = client.query(**query)[0]["count(*)"]
+    if before:
+        client.delete(collection_name=settings.COLLECTION, filter='chunk_id >= ""')
+        client.flush(collection_name=settings.COLLECTION)
+    remaining = client.query(**query)[0]["count(*)"]
+    if remaining:
+        raise RuntimeError(f"清库校验失败：仍有 {remaining} 条记录")
+    return before
+
+
+def upsert_chunks(client: MilvusClient, chunks: list[Document], vectors: list[list[float]]) -> int:
+    """全部校验后分批写入，以 chunk_id 更新或新增；批次间不具备事务原子性。"""
+    from supportflow.core.config import settings
+
+    rows = prepare_rows(chunks, vectors)
+    if not rows:
+        return 0
     written = 0
     for start in range(0, len(rows), WRITE_BATCH_SIZE):
         batch = rows[start:start + WRITE_BATCH_SIZE]

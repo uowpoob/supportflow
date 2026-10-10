@@ -1,61 +1,9 @@
-"""创建本地演示订单与商品明细：python -m supportflow.db.seed.seed_orders。
+"""小米演示订单：两位客户各 20 单，金额为模拟成交价，不代表官网售价。
 
-前提：先跑过 python -m supportflow.db.seed.seed_users（订单按 username 找归属）。
-
-加 `--refresh` 会把**已存在**的订单覆盖回本文声明的状态与时间（新增的照常插入）——
-点了半天演示之后想回到干净基线，跑这个参数即可，不用手工改库。
-
-四条硬约束，改数据时别破坏：
-
-1. 可重复运行 —— 已存在的 order_no 直接跳过（除非 `--refresh`），不会出现第二份。
-2. 时间字段一律相对当前 UTC 时间算出 —— 写死日期的话，过几天
-   "签收 10 天"就变成"签收 15 天"，退款资格判定会自己翻面。
-3. **时间线必须因果成立**：下单 ≤ 支付 ≤ 发货 ≤ 签收，且都不晚于现在。
-   早先的版本只填了 paid/shipped/delivered，`created_at` 由 ORM 默认写成插库时刻，
-   于是库里出现"9 月 16 日下单、9 月 4 日支付"这种订单 —— 演示时一眼就被看出来。
-   `_validate()` 会在写库前拦住这类数据。
-4. **不放故意写坏的样本**。证书异常分支（签收时间在未来、已支付但实付 0）
-   由 `tests/test_refund_rules.py` 用内存对象覆盖 —— 演示库只放现实中真会出现的订单。
-
-时间都是相对"跑种子的那一刻"锚定的，所以整套数据会随时间漂移：越靠近 14 天窗口
-边界的订单，越容易在几天后翻面（可退的变成超期）。演示或验收前重新跑一次
-`seed_orders --refresh` 就能重新锚定，不用手工改库。
-
-## 编号规则
-
-- `order_no`：16 位纯数字，**不嵌日期**。customer1 用号段 `126091843002`，
-  customer2 用 `127018902963`，后 4 位是序号，例如 `1260918430020001`。
-  不嵌日期是故意的：时间字段会随播种时刻漂移，单号里的日期一旦写死就跟它对不上，
-  而且重复跑种子会换掉一批单号（等于每次多一批"新订单"）。
-- `OrderSpec.label`：`C1-01` 这种人看的短名，**只用于注释、打印和文档**，不落库。
-  库里是 16 位数字，不给人念的；写覆盖面清单时用 label 才看得清。
-
-## 覆盖面
-
-28 单把 `services/refunds.evaluate_eligibility` 的每个分支都点亮（括号里是命中的 code）：
-
-    ok ─────────────── C1-01 / C1-05 / C1-06 / C1-10 / C1-12 / C1-16
-                       C2-01 / C2-04 / C2-07
-    window_expired ─── C1-02（签收 15 天）、C1-07（签收 14 天零 2 小时）
-                       C1-13（签收 16 天）、C2-10（签收 16 天）
-    order_unpaid ───── C1-03 / C2-06
-    order_refunded ─── C1-04 / C1-14 / C2-11
-    not_delivered ──── C1-08（未发货）、C1-09（已发货未签收）
-                       C2-09（已发货未签收）、C2-12（未发货）
-    already_requested ─ C1-11 / C1-15 / C2-02 / C2-03 / C2-05 / C2-08
-                        （由 seed_refunds 建申请占位）
-
-`no_payable_amount`（实付 0 却是已支付）和 `delivered_time_in_future` 两个分支**没有样本** ——
-它们只可能由脏数据触发，属于单元测试的活，不放进演示库。
-
-顺带覆盖的展示场景：一单多商品（C1-16 三行、C2-12 两行）、数量大于 1（C1-10）、
-大额订单 9999.00 元（C1-01）、小额订单 39.00 元（C2-06）、无运单号（未发货的那几单）、
-两个客户各有独立号段（验证归属隔离）。
-
-## 商品目录
-
-商品名 = 品牌 + 系列；型号 = 该系列的具体机型代码。同一个商品在不同订单里必然同名同价，
-因为都从 `CATALOG` 取 —— 手抄 ItemSpec 迟早出现"同一款耳机三个名字"。
+订单号稳定，所有时间相对同一次播种的 UTC 时间锚定。
+覆盖未支付、待发货、运输中、签收、超期、退款，以及多商品和多件数量。
+完整刷新请运行 python -m supportflow.db.seed.seed_demo --refresh，
+在同一个事务内同步更新订单、商品明细、退款申请、审批与流水。
 """
 
 import asyncio
@@ -63,7 +11,8 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from supportflow.db.base import utc_now
 from supportflow.db.session import SessionLocal, engine
@@ -94,33 +43,40 @@ class ItemSpec:
 
 # 演示用商品目录。key 是短别名，只在本文件里用。
 CATALOG: dict[str, Product] = {
-    "iphone15pm": Product("SKU-AP-IP15PM-256", "Apple iPhone 15", "Pro Max 256G", 999900),
-    "iphone15case": Product("SKU-AP-IP15-CASE", "Apple iPhone 15 硅胶保护壳", "磁吸款", 39900),
-    "airpodspro2": Product("SKU-AP-APP2-USBC", "Apple AirPods Pro", "第二代 USB-C", 189900),
-    "wh1000xm5": Product("SKU-SONY-WH1000XM5", "索尼 WH-1000XM5", "无线降噪头戴式", 289900),
-    "jblgo4": Product("SKU-JBL-GO4", "JBL GO 4 便携音箱", "GO 4", 29900),
-    "mispkplay": Product("SKU-MI-SPK-PLAY", "小米 蓝牙音箱 Play", "小米音箱 Play", 12900),
+    "xiaomi14ultra": Product("SKU-MI-14U-512", "小米 14 Ultra", "16GB+512GB 黑色", 649900),
+    "xiaomi14case": Product("SKU-MI-14-CASE", "小米 14 硅胶保护壳", "黑色", 9900),
+    "xiaomibuds4pro": Product("SKU-MI-BUDS4-PRO", "小米 Buds 4 Pro", "星耀金", 99900),
+    "redmibuds5pro": Product("SKU-MI-RBUDS5-PRO", "REDMI Buds 5 Pro", "曜石黑", 39900),
+    "xiaomibluetooth": Product("SKU-MI-SPK", "小米 蓝牙音箱", "黑色", 19900),
+    "mispkplay": Product("SKU-MI-SPK-PLAY", "小米 蓝牙音箱 Play", "黑色", 12900),
     "mipb20": Product("SKU-MI-PB20", "小米 移动电源", "20000mAh 22.5W", 12900),
     "mipb10": Product("SKU-MI-PB10", "小米 移动电源", "10000mAh 22.5W", 9900),
-    "anker65w": Product("SKU-ANK-A2666", "Anker 安克 65W 氮化镓充电器", "A2666", 19900),
-    "apple20w": Product("SKU-AP-A2305", "Apple 20W USB-C 电源适配器", "A2305", 14900),
-    "ugreencable": Product("SKU-UG-CD137", "绿联 Type-C 数据线 2m", "CD137 100W", 5900),
-    "apc05": Product("SKU-AP-C05", "Apple USB-C 转接线", "0.5m", 14900),
-    "asusfa507": Product("SKU-ASUS-FA507NV", "华硕 天选5 游戏本", "FA507NV", 749900),
-    "matebook14": Product("SKU-HW-MB14-2024", "华为 MateBook 14", "2024 酷睿版", 549900),
-    "xiaoxinpad": Product("SKU-LENOVO-TB350FU", "联想 小新 Pad", "TB350FU", 139900),
-    "belkintb4": Product("SKU-BELKIN-TB4", "贝尔金 雷电 4 扩展坞", "七合一", 109800),
-    "sande61": Product("SKU-SD-E61-1TB", "SanDisk 移动固态硬盘 1TB", "E61", 59900),
-    "k380": Product("SKU-LOGI-K380", "罗技 K380 键盘", "多设备蓝牙版", 32900),
-    "g102": Product("SKU-LOGI-G102", "罗技 G102 鼠标", "第二代", 12900),
-    "c920": Product("SKU-LOGI-C920", "罗技 C920 摄像头", "C920 Pro", 49900),
-    "wristrest": Product("SKU-LOGI-WR1", "罗技 键盘腕托", "记忆棉", 6900),
-    "aocq27g2s": Product("SKU-AOC-Q27G2S", "AOC 27 英寸 2K 显示器", "Q27G2S", 129900),
-    "gt4_46": Product("SKU-HW-GT4-46", "华为 WATCH GT 4", "46mm 时尚款", 148800),
-    "gt4_41": Product("SKU-HW-GT4-41", "华为 WATCH GT 4 时尚款", "41mm", 168800),
-    "tplinkxdr": Product("SKU-TP-XDR3010", "TP-LINK AX3000 路由器", "TL-XDR3010", 22900),
-    "mics250": Product("SKU-MI-CS250", "小米 液态硅胶手机壳", "小米 14 款", 3900),
-    "ankcarmount": Product("SKU-ANK-A2735", "安克 车载手机支架", "A2735", 9900),
+    "xiaomigan65w": Product("SKU-MI-GAN65", "小米 氮化镓充电器", "65W Type-C", 14900),
+    "xiaomicharger33w": Product("SKU-MI-CHG33", "小米 充电器", "33W Type-C", 6900),
+    "xiaomicable": Product("SKU-MI-CABLE-C", "小米 USB-C 数据线", "1m 白色", 2900),
+    "xiaomicable6a": Product("SKU-MI-CABLE-6A", "小米 USB-C 数据线", "6A 1m 白色", 3900),
+    "redmibookpro16": Product("SKU-MI-RBOOK-PRO16", "REDMI Book Pro 16", "16GB+1TB 灰色", 599900),
+    "redmibook14": Product("SKU-MI-RBOOK14", "REDMI Book 14", "16GB+512GB 灰色", 449900),
+    "xiaomipad6": Product("SKU-MI-PAD6", "小米 平板 6", "8GB+256GB 引力灰", 189900),
+    "xiaomiusbhub": Product("SKU-MI-USB-HUB", "小米 USB 分线器", "四口 白色", 9900),
+    "mijiaairpurifier4": Product("SKU-MI-AIR4", "米家 空气净化器 4", "白色", 89900),
+    "xiaomikeyboard": Product("SKU-MI-KB", "小米 无线键盘", "黑色", 12900),
+    "xiaomimouse": Product("SKU-MI-MOUSE", "小米 无线鼠标", "黑色", 6900),
+    "mijiacamera3": Product("SKU-MI-CAM3", "小米 智能摄像机 3 云台版", "白色", 19900),
+    "mijiasensor": Product("SKU-MI-TEMP2", "米家 蓝牙温湿度计 2", "白色", 6900),
+    "redmimonitor27": Product("SKU-MI-RMON27", "REDMI 显示器", "27英寸 2K 黑色", 99900),
+    "xiaomiwatchs3": Product("SKU-MI-WATCH-S3", "小米 Watch S3", "黑色", 79900),
+    "xiaomiband9": Product("SKU-MI-BAND9", "小米 手环 9", "午夜黑", 24900),
+    "xiaomirouterax3000": Product("SKU-MI-AX3000", "小米 路由器 AX3000", "黑色", 29900),
+    "mics250": Product("SKU-MI-CS14", "小米 液态硅胶手机壳", "小米 14 款 白色", 3900),
+    "xiaomicarcharger": Product("SKU-MI-CAR-WC", "小米 无线车充", "20W 黑色", 19900),
+    "robot1s": Product("SKU-MI-ROBOT1S", "米家 全能扫拖机器人 1S", "白色", 299900),
+    "washer12": Product("SKU-MI-WASH12", "米家 洗衣机", "XHQG120MJ103 白色", 249900),
+    "circulationfan": Product("SKU-MI-FAN", "米家 智能直流变频循环扇", "落地式 白色", 34900),
+    "waterboiler5l": Product("SKU-MI-BOILER5", "米家 智能电热水瓶", "5L 白色", 29900),
+    "carhumidifier": Product("SKU-MI-CAR-HUM", "米家 智能车载加湿器", "黑色", 9900),
+    "airfryer65l": Product("SKU-MI-AIRFRY65", "米家 智能空气炸锅 Pro 蒸烤版", "6.5L 白色", 59900),
+    "airconditioner": Product("SKU-MI-AC", "米家 空调", "1.5匹 白色", 219900),
 }
 
 
@@ -162,7 +118,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         order_no="1260918430020001",
         label="C1-01",
         username="customer1",
-        paid_amount_cents=999900,
+        paid_amount_cents=649900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467219",
@@ -170,14 +126,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=12),
         shipped_ago=timedelta(days=11),
         delivered_ago=timedelta(days=10),
-        items=(item("iphone15pm"),),
-        note="基准可退单：签收 10 天；大额 9999.00 元",
+        items=(item("xiaomi14ultra"),),
+        note="基准可退单：签收 10 天；大额 6499.00 元",
     ),
     OrderSpec(
         order_no="1260918430020002",
         label="C1-02",
         username="customer1",
-        paid_amount_cents=189900,
+        paid_amount_cents=99900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467220",
@@ -185,7 +141,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=17),
         shipped_ago=timedelta(days=16),
         delivered_ago=timedelta(days=15),
-        items=(item("airpodspro2"),),
+        items=(item("xiaomibuds4pro"),),
         note="超期：签收 15 天，超出 14 天窗口",
     ),
     OrderSpec(
@@ -208,7 +164,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         order_no="1260918430020004",
         label="C1-04",
         username="customer1",
-        paid_amount_cents=5900,
+        paid_amount_cents=2900,
         payment_status=PaymentStatus.REFUNDED,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467222",
@@ -216,14 +172,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=21),
         shipped_ago=timedelta(days=20),
         delivered_ago=timedelta(days=18),
-        items=(item("ugreencable"),),
+        items=(item("xiaomicable"),),
         note="已退款：完整退款链路（申请/审批/流水），永久不能重复申请",
     ),
     OrderSpec(
         order_no="1260918430020005",
         label="C1-05",
         username="customer1",
-        paid_amount_cents=289900,
+        paid_amount_cents=39900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467223",
@@ -231,14 +187,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=6),
         shipped_ago=timedelta(days=4),
         delivered_ago=timedelta(days=3),
-        items=(item("wh1000xm5"),),
-        note="基准可退单：签收 3 天，头戴式降噪耳机",
+        items=(item("redmibuds5pro"),),
+        note="基准可退单：签收 3 天，真无线降噪耳机",
     ),
     OrderSpec(
         order_no="1260918430020006",
         label="C1-06",
         username="customer1",
-        paid_amount_cents=32900,
+        paid_amount_cents=12900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467224",
@@ -248,14 +204,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         # 不能写"恰好 14 天"：时间相对播种时刻算，秒针一走就翻面成超期；
         # 精确边界由纯函数单测覆盖，演示数据只负责"窗口快到期"的稳定状态。
         delivered_ago=timedelta(days=13),
-        items=(item("k380"),),
+        items=(item("xiaomikeyboard"),),
         note="窗口内靠后：签收 13 天，距退款截止只剩约 1 天",
     ),
     OrderSpec(
         order_no="1260918430020007",
         label="C1-07",
         username="customer1",
-        paid_amount_cents=12900,
+        paid_amount_cents=6900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467225",
@@ -264,14 +220,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         shipped_ago=timedelta(days=15),
         # 窗口关闭 2 小时 —— 和 C1-06 配对：一个还在窗口内、一个刚出窗口。
         delivered_ago=timedelta(days=14, hours=2),
-        items=(item("g102"),),
+        items=(item("xiaomimouse"),),
         note="刚过窗口：签收 14 天零 2 小时，退款窗口已关闭",
     ),
     OrderSpec(
         order_no="1260918430020008",
         label="C1-08",
         username="customer1",
-        paid_amount_cents=749900,
+        paid_amount_cents=599900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.UNSHIPPED,
         tracking_no=None,
@@ -279,14 +235,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=2),
         shipped_ago=None,
         delivered_ago=None,
-        items=(item("asusfa507"),),
-        note="已支付未发货：大额游戏本，付款了但还没签收",
+        items=(item("redmibookpro16"),),
+        note="已支付未发货：大额笔记本，付款了但还没签收",
     ),
     OrderSpec(
         order_no="1260918430020009",
         label="C1-09",
         username="customer1",
-        paid_amount_cents=49900,
+        paid_amount_cents=19900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.SHIPPED,
         tracking_no="SF150238467227",
@@ -294,15 +250,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=3),
         shipped_ago=timedelta(days=1),
         delivered_ago=None,
-        items=(item("c920"),),
+        items=(item("mijiacamera3"),),
         note="已发货未签收：在途，签收后才开始算 14 天",
     ),
     OrderSpec(
         order_no="1260918430020010",
         label="C1-10",
         username="customer1",
-        # 两件同一商品：149.00 × 2 = 298.00。
-        paid_amount_cents=29800,
+        paid_amount_cents=13800,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467228",
@@ -310,14 +265,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=8),
         shipped_ago=timedelta(days=7),
         delivered_ago=timedelta(days=6),
-        items=(item("apple20w", quantity=2),),
+        items=(item("xiaomicharger33w", quantity=2),),
         note="数量大于 1：同一商品买了两件，签收 6 天",
     ),
     OrderSpec(
         order_no="1260918430020011",
         label="C1-11",
         username="customer1",
-        paid_amount_cents=129900,
+        paid_amount_cents=99900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467229",
@@ -325,14 +280,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=10),
         shipped_ago=timedelta(days=9),
         delivered_ago=timedelta(days=8),
-        items=(item("aocq27g2s"),),
+        items=(item("redmimonitor27"),),
         note="已有已批准申请 + 退款打款中（seed_refunds 建）→ already_requested",
     ),
     OrderSpec(
         order_no="1260918430020012",
         label="C1-12",
         username="customer1",
-        paid_amount_cents=148800,
+        paid_amount_cents=79900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467230",
@@ -340,14 +295,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=3),
         shipped_ago=timedelta(days=2),
         delivered_ago=timedelta(days=1),
-        items=(item("gt4_46"),),
+        items=(item("xiaomiwatchs3"),),
         note="曾被拒绝（seed_refunds 建）→ 名额已释放，**这单仍然可退**",
     ),
     OrderSpec(
         order_no="1260918430020013",
         label="C1-13",
         username="customer1",
-        paid_amount_cents=39900,
+        paid_amount_cents=9900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467231",
@@ -355,14 +310,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=19),
         shipped_ago=timedelta(days=18),
         delivered_ago=timedelta(days=16),
-        items=(item("iphone15case"),),
+        items=(item("xiaomi14case"),),
         note="超期（小额）：签收 16 天，手机壳这类低价配件也走同一套规则",
     ),
     OrderSpec(
         order_no="1260918430020014",
         label="C1-14",
         username="customer1",
-        paid_amount_cents=549900,
+        paid_amount_cents=449900,
         payment_status=PaymentStatus.REFUNDED,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467232",
@@ -370,14 +325,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=25),
         shipped_ago=timedelta(days=24),
         delivered_ago=timedelta(days=22),
-        items=(item("matebook14"),),
+        items=(item("redmibook14"),),
         note="已退款（大额笔记本）：第二条完整退款链路",
     ),
     OrderSpec(
         order_no="1260918430020015",
         label="C1-15",
         username="customer1",
-        paid_amount_cents=19900,
+        paid_amount_cents=14900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467233",
@@ -385,15 +340,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=4),
         shipped_ago=timedelta(days=3),
         delivered_ago=timedelta(days=2),
-        items=(item("anker65w"),),
+        items=(item("xiaomigan65w"),),
         note="已有待审批申请（seed_refunds 建）→ 管理侧待办里能批到这条",
     ),
     OrderSpec(
         order_no="1260918430020016",
         label="C1-16",
         username="customer1",
-        # 1098.00 + 149.00×2 + 69.00 = 1465.00。
-        paid_amount_cents=146500,
+        paid_amount_cents=24600,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF150238467234",
@@ -402,11 +356,11 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         shipped_ago=timedelta(days=4),
         delivered_ago=timedelta(days=2),
         items=(
-            item("belkintb4"),
-            item("apc05", quantity=2),
-            item("wristrest"),
+            item("xiaomiusbhub"),
+            item("xiaomicable6a", quantity=2),
+            item("mijiasensor"),
         ),
-        note="一单多商品（三行）+ 数量大于 1：签收 2 天，合计 1465.00 元",
+        note="一单多商品（三行）+ 数量大于 1：签收 2 天，合计 246.00 元",
     ),
     OrderSpec(
         order_no="1270189029630001",
@@ -427,7 +381,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         order_no="1270189029630002",
         label="C2-02",
         username="customer2",
-        paid_amount_cents=29900,
+        paid_amount_cents=19900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592119",
@@ -435,14 +389,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=4),
         shipped_ago=timedelta(days=3),
         delivered_ago=timedelta(days=2),
-        items=(item("jblgo4"),),
+        items=(item("xiaomibluetooth"),),
         note="已有待审批申请（seed_refunds 建）→ already_requested",
     ),
     OrderSpec(
         order_no="1270189029630003",
         label="C2-03",
         username="customer2",
-        paid_amount_cents=139900,
+        paid_amount_cents=189900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592120",
@@ -450,7 +404,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=7),
         shipped_ago=timedelta(days=6),
         delivered_ago=timedelta(days=4),
-        items=(item("xiaoxinpad"),),
+        items=(item("xiaomipad6"),),
         note="已有已批准申请 + 退款打款中（seed_refunds 建）→ already_requested",
     ),
     OrderSpec(
@@ -465,23 +419,23 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=11),
         shipped_ago=timedelta(days=10),
         delivered_ago=timedelta(days=6),
-        items=(item("wristrest"),),
+        items=(item("mijiasensor"),),
         note="曾被拒绝（seed_refunds 建）→ 名额已释放，**这单仍然可退**",
     ),
     OrderSpec(
         order_no="1270189029630005",
         label="C2-05",
         username="customer2",
-        paid_amount_cents=9900,
-        payment_status=PaymentStatus.PAID,
+        paid_amount_cents=19900,
+        payment_status=PaymentStatus.REFUNDED,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592122",
         created_ago=timedelta(days=13),
         paid_ago=timedelta(days=12),
         shipped_ago=timedelta(days=11),
         delivered_ago=timedelta(days=9),
-        items=(item("ankcarmount"),),
-        note="已有已批准申请 + 打款成功（seed_refunds 建）→ already_requested",
+        items=(item("xiaomicarcharger"),),
+        note="完整退款成功：订单、申请、流水状态一致",
     ),
     OrderSpec(
         order_no="1270189029630006",
@@ -502,7 +456,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         order_no="1270189029630007",
         label="C2-07",
         username="customer2",
-        paid_amount_cents=22900,
+        paid_amount_cents=29900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592124",
@@ -511,14 +465,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         shipped_ago=timedelta(days=13),
         # 同一时刻发货即签收：时间线允许相等，不允许倒挂。
         delivered_ago=timedelta(days=13),
-        items=(item("tplinkxdr"),),
+        items=(item("xiaomirouterax3000"),),
         note="窗口内靠后：签收 13 天，距退款截止只剩约 1 天",
     ),
     OrderSpec(
         order_no="1270189029630008",
         label="C2-08",
         username="customer2",
-        paid_amount_cents=168800,
+        paid_amount_cents=24900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592125",
@@ -527,7 +481,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         shipped_ago=timedelta(days=1),
         # 6 小时前刚签收：窗口的**第一天**，也是可退的。
         delivered_ago=timedelta(hours=6),
-        items=(item("gt4_41"),),
+        items=(item("xiaomiband9"),),
         note="窗口起点：6 小时前刚签收；已有待审批申请（seed_refunds 建）",
     ),
     OrderSpec(
@@ -549,7 +503,7 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         order_no="1270189029630010",
         label="C2-10",
         username="customer2",
-        paid_amount_cents=59900,
+        paid_amount_cents=89900,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592127",
@@ -557,14 +511,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=18),
         shipped_ago=timedelta(days=17),
         delivered_ago=timedelta(days=16),
-        items=(item("sande61"),),
-        note="超期：签收 16 天；有一次超期后被拒的申请（seed_refunds 建）",
+        items=(item("mijiaairpurifier4"),),
+        note="超期：签收 16 天；窗口内申请曾被拒绝（seed_refunds 建）",
     ),
     OrderSpec(
         order_no="1270189029630011",
         label="C2-11",
         username="customer2",
-        paid_amount_cents=289900,
+        paid_amount_cents=39900,
         payment_status=PaymentStatus.REFUNDED,
         fulfillment_status=FulfillmentStatus.DELIVERED,
         tracking_no="SF160337592128",
@@ -572,15 +526,14 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=23),
         shipped_ago=timedelta(days=22),
         delivered_ago=timedelta(days=20),
-        items=(item("wh1000xm5"),),
+        items=(item("redmibuds5pro"),),
         note="已退款：第三条完整退款链路（同一商品在客户 1 手里是可退的）",
     ),
     OrderSpec(
         order_no="1270189029630012",
         label="C2-12",
         username="customer2",
-        # 129.00 + 329.00 = 458.00。
-        paid_amount_cents=45800,
+        paid_amount_cents=19800,
         payment_status=PaymentStatus.PAID,
         fulfillment_status=FulfillmentStatus.UNSHIPPED,
         tracking_no=None,
@@ -588,8 +541,104 @@ DEMO_ORDERS: tuple[OrderSpec, ...] = (
         paid_ago=timedelta(days=1),
         shipped_ago=None,
         delivered_ago=None,
-        items=(item("g102"), item("k380")),
-        note="已支付未发货 + 一单多商品（两行）：键鼠套装一起买",
+        items=(item("xiaomimouse"), item("xiaomikeyboard")),
+        note="已支付未发货 + 一单多商品（两行）：键鼠组合一起买",
+    ),
+    OrderSpec(
+        order_no="1260918430020017", label="C1-17", username="customer1",
+        paid_amount_cents=299900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD185000000017',
+        created_ago=timedelta(days=7), paid_ago=timedelta(days=6), shipped_ago=timedelta(days=5), delivered_ago=timedelta(days=3),
+        items=(item("robot1s"),), note="扫拖机器人：已批准，打款中",
+    ),
+    OrderSpec(
+        order_no="1260918430020018", label="C1-18", username="customer1",
+        paid_amount_cents=89800,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD185000000018',
+        created_ago=timedelta(days=7), paid_ago=timedelta(days=6), shipped_ago=timedelta(days=5), delivered_ago=timedelta(days=3),
+        items=(item("waterboiler5l"), item("airfryer65l"),), note="厨房家电组合：整单退款待审批",
+    ),
+    OrderSpec(
+        order_no="1260918430020019", label="C1-19", username="customer1",
+        paid_amount_cents=34900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD185000000019',
+        created_ago=timedelta(days=7), paid_ago=timedelta(days=6), shipped_ago=timedelta(days=5), delivered_ago=timedelta(days=3),
+        items=(item("circulationfan"),), note="风扇申请已拒绝：仍在窗口内，可重新申请",
+    ),
+    OrderSpec(
+        order_no="1260918430020020", label="C1-20", username="customer1",
+        paid_amount_cents=27600,
+        payment_status=PaymentStatus.REFUNDED, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD185000000020',
+        created_ago=timedelta(days=13), paid_ago=timedelta(days=12), shipped_ago=timedelta(days=11), delivered_ago=timedelta(days=9),
+        items=(item("mipb10", quantity=2), item("xiaomicable6a", quantity=2),), note="多商品、多件整单退款成功",
+    ),
+    OrderSpec(
+        order_no="1270189029630013", label="C2-13", username="customer2",
+        paid_amount_cents=249900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000013',
+        created_ago=timedelta(days=9), paid_ago=timedelta(days=8), shipped_ago=timedelta(days=7), delivered_ago=timedelta(days=5),
+        items=(item("washer12"),), note="洗衣机：已批准，打款中",
+    ),
+    OrderSpec(
+        order_no="1270189029630014", label="C2-14", username="customer2",
+        paid_amount_cents=219900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000014',
+        created_ago=timedelta(days=10), paid_ago=timedelta(days=9), shipped_ago=timedelta(days=8), delivered_ago=timedelta(days=6),
+        items=(item("airconditioner"),), note="空调：已批准，打款中",
+    ),
+    OrderSpec(
+        order_no="1270189029630015", label="C2-15", username="customer2",
+        paid_amount_cents=299900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000015',
+        created_ago=timedelta(days=6), paid_ago=timedelta(days=5), shipped_ago=timedelta(days=4), delivered_ago=timedelta(days=2),
+        items=(item("robot1s"),), note="扫拖机器人：整单退款待审批",
+    ),
+    OrderSpec(
+        order_no="1270189029630016", label="C2-16", username="customer2",
+        paid_amount_cents=9900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000016',
+        created_ago=timedelta(days=8), paid_ago=timedelta(days=7), shipped_ago=timedelta(days=6), delivered_ago=timedelta(days=4),
+        items=(item("carhumidifier"),), note="车载加湿器申请已拒绝：仍可再次申请",
+    ),
+    OrderSpec(
+        order_no="1270189029630017", label="C2-17", username="customer2",
+        paid_amount_cents=0,
+        payment_status=PaymentStatus.UNPAID, fulfillment_status=FulfillmentStatus.UNSHIPPED,
+        tracking_no=None,
+        created_ago=timedelta(days=7), paid_ago=None, shipped_ago=None, delivered_ago=None,
+        items=(item("xiaomiband9"), item("mipb10"),), note="多商品未支付：实付为零，无物流",
+    ),
+    OrderSpec(
+        order_no="1270189029630018", label="C2-18", username="customer2",
+        paid_amount_cents=29900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000018',
+        created_ago=timedelta(days=34), paid_ago=timedelta(days=33), shipped_ago=timedelta(days=32), delivered_ago=timedelta(days=30),
+        items=(item("waterboiler5l"),), note="历史订单：签收30天，超出退款窗口",
+    ),
+    OrderSpec(
+        order_no="1270189029630019", label="C2-19", username="customer2",
+        paid_amount_cents=48700,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000019',
+        created_ago=timedelta(days=5), paid_ago=timedelta(days=4), shipped_ago=timedelta(days=3), delivered_ago=timedelta(days=1),
+        items=(item("circulationfan"), item("mijiasensor", quantity=2),), note="智能家居组合：签收1天，可整单退",
+    ),
+    OrderSpec(
+        order_no="1270189029630020", label="C2-20", username="customer2",
+        paid_amount_cents=6900,
+        payment_status=PaymentStatus.PAID, fulfillment_status=FulfillmentStatus.DELIVERED,
+        tracking_no='JD285000000020',
+        created_ago=timedelta(days=18), paid_ago=timedelta(days=17), shipped_ago=timedelta(days=16), delivered_ago=timedelta(days=13, hours=22),
+        items=(item("xiaomicharger33w"),), note="期限边界：距14天截止约2小时，仍可退",
     ),
 )
 
@@ -687,73 +736,43 @@ def _apply(order: Order, spec: OrderSpec, user_id: int, now: datetime) -> None:
     order.updated_at = max(events)
 
 
-async def main(refresh: bool = False) -> None:
+async def seed(session: AsyncSession, now: datetime, refresh: bool = False):
+    """在调用方事务中写入；刷新时商品明细也同步替换。"""
     _validate()
-    now = utc_now()
-    created: list[OrderSpec] = []
-    refreshed: list[OrderSpec] = []
-    skipped: list[OrderSpec] = []
+    created, refreshed, skipped = [], [], []
+    user_ids = dict((await session.execute(select(User.username, User.id))).all())
+    existing = {order.order_no: order for order in await session.scalars(
+        select(Order).where(Order.order_no.in_([spec.order_no for spec in DEMO_ORDERS]))
+    )}
+    for spec in DEMO_ORDERS:
+        user_id = user_ids.get(spec.username)
+        if user_id is None:
+            raise RuntimeError(f"Missing demo account: {spec.username}; run seed_users first")
+        order = existing.get(spec.order_no)
+        if order is not None and not refresh:
+            skipped.append(spec)
+            continue
+        is_new = order is None
+        if is_new:
+            order = Order(order_no=spec.order_no)
+            session.add(order)
+        _apply(order, spec, user_id, now)
+        await session.flush()
+        if not is_new:
+            await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+        for row in spec.items:
+            session.add(OrderItem(order_id=order.id, **asdict(row),
+                                 created_at=order.created_at, updated_at=order.created_at))
+        (created if is_new else refreshed).append(spec)
+    await session.flush()
+    return created, refreshed, skipped
 
+
+async def main(refresh: bool = False) -> None:
     try:
-        async with SessionLocal() as session:
-            # 全部订单一起提交；中途失败时事务回滚，不会留下半份数据。
-            async with session.begin():
-                # 归属按 username 查，不写死自增 id —— 重建库后 id 会变。
-                user_ids = dict(
-                    (await session.execute(select(User.username, User.id))).all()
-                )
-                existing = {
-                    order.order_no: order
-                    for order in await session.scalars(
-                        select(Order).where(
-                            Order.order_no.in_([spec.order_no for spec in DEMO_ORDERS])
-                        )
-                    )
-                }
-
-                for spec in DEMO_ORDERS:
-                    user_id = user_ids.get(spec.username)
-                    if user_id is None:
-                        raise RuntimeError(
-                            f"Missing demo account: {spec.username}; "
-                            "run python -m supportflow.db.seed.seed_users first"
-                        )
-
-                    if spec.order_no in existing:
-                        if not refresh:
-                            skipped.append(spec)
-                            continue
-                        _apply(existing[spec.order_no], spec, user_id, now)
-                        refreshed.append(spec)
-                        continue
-
-                    order = Order(order_no=spec.order_no)
-                    _apply(order, spec, user_id, now)
-                    session.add(order)
-                    # flush 先写 orders 拿到自增 id，明细才能引用它（此时还没提交）。
-                    await session.flush()
-
-                    for row in spec.items:
-                        session.add(OrderItem(order_id=order.id, **asdict(row)))
-
-                    created.append(spec)
-
-        total_rows = sum(len(spec.items) for spec in created)
-        print(
-            f"Orders: created {len(created)}, refreshed {len(refreshed)}, "
-            f"skipped {len(skipped)}; {total_rows} item row(s) inserted."
-        )
-        if skipped and not refresh:
-            print("（想把这些订单覆盖回声明状态，加 --refresh 重跑）")
-        # 打印覆盖清单：种子跑完直接对着它核对"该覆盖的场景是不是都在"。
-        for spec in (*created, *refreshed):
-            print(
-                f"  {spec.label} order_no={spec.order_no} owner={spec.username} "
-                f"paid_cents={spec.paid_amount_cents} "
-                f"payment={spec.payment_status.value} "
-                f"fulfillment={spec.fulfillment_status.value} "
-                f"| {spec.note}"
-            )
+        async with SessionLocal() as session, session.begin():
+            created, refreshed, skipped = await seed(session, utc_now(), refresh)
+        print(f"Orders: created {len(created)}, refreshed {len(refreshed)}, skipped {len(skipped)}")
     finally:
         await engine.dispose()
 

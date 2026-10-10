@@ -110,5 +110,43 @@ async def test_pipeline_verifies_rows_and_always_closes(settings, tmp_path, monk
         result = await resource2chunks.ingest_documents((tmp_path,))
         assert result == {"documents": 1, "chunks": 1, "upserted": 1, "verified": 1}
         assert client.query.call_args.kwargs["consistency_level"] == "Strong"
-        assert "DOC-001#1.1" in client.query.call_args.kwargs["filter"]
+        assert "DOC-001.md#1.1" in client.query.call_args.kwargs["filter"]
+    client.close.assert_called_once()
+
+
+def test_clear_chunks_checks_remaining_records(settings):
+    client = Mock()
+    client.query.side_effect = [[{"count(*)": 428}], [{"count(*)": 0}]]
+    assert milvus.clear_chunks(client) == 428
+    client.delete.assert_called_once_with(collection_name="test_documents", filter='chunk_id >= ""')
+    client.flush.assert_called_once()
+    client.query.side_effect = [[{"count(*)": 2}], [{"count(*)": 1}]]
+    with pytest.raises(RuntimeError, match="清库校验失败"):
+        milvus.clear_chunks(client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "embedding", "invalid_vector", "clear"])
+async def test_replace_clears_only_after_validation(settings, tmp_path, monkeypatch, failure):
+    settings.DB_NAME = "test_db"
+    (tmp_path / "new.md").write_text("# 新资料\n\n## 第一条\n\n正文。", encoding="utf-8")
+    client = Mock()
+    client.upsert.return_value = {"upsert_count": 1}
+    client.query.side_effect = [[{"count(*)": 428}], [{"count(*)": 1 if failure == "clear" else 0}],
+                                [{"count(*)": 1}], [{"count(*)": 1}]]
+    monkeypatch.setattr(milvus, "init_milvus", lambda: client)
+    embed = AsyncMock(return_value=[[1.0]] if failure == "invalid_vector" else [[1.0, 0.0]])
+    if failure == "embedding":
+        embed.side_effect = RuntimeError("model unavailable")
+    monkeypatch.setattr(embedding, "embed_texts", embed)
+    if failure:
+        with pytest.raises((RuntimeError, ValueError)):
+            await resource2chunks.ingest_documents((tmp_path,), replace=True)
+        client.upsert.assert_not_called()
+        if failure != "clear":
+            client.delete.assert_not_called()
+    else:
+        result = await resource2chunks.ingest_documents((tmp_path,), replace=True)
+        assert result == {"documents": 1, "chunks": 1, "upserted": 1, "verified": 1, "deleted": 428}
+        assert [call[0] for call in client.method_calls].index("delete") < [call[0] for call in client.method_calls].index("upsert")
     client.close.assert_called_once()

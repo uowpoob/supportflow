@@ -14,6 +14,7 @@ wheels/
 .env.*
 !.env.example
 .idea/
+.local
 
 .workbuddy
 web
