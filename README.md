@@ -1,164 +1,275 @@
 # SupportFlow
 
-用于学习和面试展示的智能售后工单 Agent。
+**基于 LangGraph 与 RAG 的智能售后助手**
 
-**已实现**：登录认证与会话、角色依赖、订单查询、退款资格判定 / 申请 / 审批 / 模拟退款全链路、
-Agent 对话（LangGraph 单图 + PostgreSQL checkpoint，支持人工审批中断与恢复、SSE 流式输出）、
-政策知识检索（向量 / BM25 / RRF 融合 / 重排四段，附四档对比评测报告）。
+SupportFlow 将订单查询、产品问题解答、售后政策咨询和退款办理整合到同一个对话入口。客户可以通过自然语言描述问题，助手结合订单工具和知识库提供回答；涉及退款时，由后端校验业务规则，再交给管理员审批，完成模拟退款与会话恢复。
 
-**尚未实现**：一键启动的 compose、面向服务器的部署脚本与 nginx、LangSmith 评测报告。
-分阶段记录见 [开发计划](docs/plan-8-days.md)。
+项目采用 Vue 3 + FastAPI 前后端分离架构，使用 MySQL 保存业务数据、PostgreSQL 保存对话状态、Milvus 保存知识向量。适合用于学习 Agent 工具调用、混合检索、人工审批和业务系统集成。
 
-## 本地启动
+> 本项目使用演示订单与模拟退款，不接入真实支付。演示退款规则为项目自定义规则，与知识库中的法律条款、品牌售后政策分别处理。
 
-在项目根目录执行。先把 `.env.example` 复制成 `.env`，填三处密钥：
+## 功能介绍
 
-- `DEEPSEEK_API_KEY` —— **必填**，不填服务起不来
-- `MYSQL_PASSWORD` —— 业务库密码，按本机 MySQL 实际情况填
-- `DASHSCOPE_API_KEY` —— 向量化与重排用，不填则政策检索不可用（其余功能正常）
+### 客户工作台
 
-其余项 `.env.example` 里都已给了可直接使用的默认值；LangSmith 那几项是可选观测，默认关闭，不用管。
+- **智能售后对话**：识别订单、退款、产品使用和政策咨询等需求，信息不足时追问，通过 SSE 流式展示回复。
+- **订单查询**：查看本人订单、商品明细、支付与物流状态，以及退款资格。
+- **产品与政策问答**：检索小米、REDMI、米家相关说明书、常见问题和售后政策，展示回答使用的资料来源。
+- **退款申请与进度查询**：支持在对话中办理，也支持通过订单页面提交申请，查看申请状态和审批意见。
+- **会话管理**：新建、切换和删除会话，首次对话后自动生成标题；配置 PostgreSQL 后可持久化对话历史。
 
-Windows PowerShell（当前电脑的 uv 在以下路径；无需修改全局 PATH）：
+### 管理员工作台
 
-```powershell
-& "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache sync --locked
-& "$env:USERPROFILE/.local/bin/uv.exe" --cache-dir .uv-cache run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080 --loop asyncio:SelectorEventLoop
+- 查看订单、退款申请、审批记录和模拟退款流水。
+- 批准或拒绝退款申请，并填写审批意见。
+- 批准时在同一个 MySQL 事务中完成审批与模拟退款，更新申请、流水和订单状态。
+- 审批后恢复关联的 Agent 会话，向客户补充处理结果。
+
+### Agent 与知识检索
+
+- **统一售后 Agent**：订单与退款共用一个 Agent，结合消息历史选择工具；产品与政策问题先检索知识，再组织回答。
+- **人工审批中断与恢复**：对话提交退款申请后，LangGraph 暂停在审批节点；管理员处理后，重新读取业务结果并恢复会话。
+- **多格式知识入库**：递归读取 Markdown、PDF、DOCX，按标题和条款切分，保留来源、页码等元信息。
+- **混合检索**：向量召回与本地 BM25 召回并行执行，经 RRF 融合后使用 Reranker 重排；重排不可用时退回融合结果。
+- **业务校验与权限隔离**：订单和会话归属由服务端认证身份校验，退款金额取数据库实付金额；事务、行锁和唯一约束用于控制重复申请与重复退款。
+
+演示退款仅支持已支付、已签收且签收后 **14 天内（含边界）** 的整单全额退款。申请必须填写原因，已退款订单不可重复退款。
+
+## 项目结构
+
+```text
+supportflow/
+├── src/supportflow/            # Python 后端
+│   ├── main.py                # FastAPI 应用入口
+│   ├── api/                   # 登录、客户与管理员接口
+│   ├── agents/                # Agent、LangGraph 状态图、提示词与工具
+│   ├── core/                  # 配置、认证与安全工具
+│   ├── db/                    # 数据库连接与演示数据脚本
+│   ├── models/                # SQLAlchemy 数据实体
+│   ├── repository/            # 订单、退款与会话数据访问
+│   ├── services/              # 业务规则、审批与对话执行
+│   ├── schemas/               # API 请求与响应结构
+│   └── retrieval/             # 知识解析、向量入库与检索
+│       ├── data/              # 产品说明书与常见问题资料
+│       ├── policies/          # 售后与消费者权益政策资料
+│       ├── retrieving/        # 向量、BM25、RRF 与重排
+│       └── resource2chunks.py # 多格式切分与入库入口
+├── web-vue/                   # Vue 3 前端
+│   └── src/
+│       ├── pages/             # 登录、客户与管理员页面
+│       ├── components/        # 对话、订单、退款与通用组件
+│       ├── api/               # API 请求与 SSE 处理
+│       ├── auth/              # 登录状态与路由权限
+│       └── styles/            # 页面样式
+├── alembic/                   # 数据库迁移
+├── tests/                     # 业务、接口、Agent 与检索测试
+├── pic/                       # 项目展示截图
+├── .env.example               # 环境变量示例
+├── pyproject.toml             # Python 项目配置与依赖
+└── uv.lock                    # Python 依赖锁定文件
 ```
 
-Linux / macOS 上去掉 `--loop asyncio:SelectorEventLoop` —— 那是 Windows 独有的坑（见下）：
+## 主要技术
+
+| 层次 | 技术 | 用途 |
+| --- | --- | --- |
+| 前端 | Vue 3、TypeScript、Vue Router、Vite | 客户与管理员工作台、路由与页面构建 |
+| 后端 | Python 3.13、FastAPI、Pydantic、Uvicorn | 异步 API、参数校验与服务运行 |
+| Agent | LangGraph、LangChain、DeepSeek | 意图识别、工具调用、多轮对话与审批恢复 |
+| 业务存储 | MySQL、SQLAlchemy、asyncmy、Alembic | 业务数据、异步访问、事务与迁移 |
+| 对话存储 | PostgreSQL、LangGraph Checkpointer、psycopg | 消息历史与图状态持久化 |
+| 知识检索 | Milvus、jieba、BM25、RRF | 语义与关键词双路召回、排名融合 |
+| 向量与重排 | 百炼 `text-embedding-v4`、`gte-rerank-v2` | 文本向量化与候选重排 |
+| 文档解析 | pypdf、python-docx | PDF、Word 文本与表格提取 |
+| 流式交互与测试 | SSE、pytest、httpx、uv | 流式回复、自动化验证与依赖管理 |
+
+三种存储分别负责不同的数据：**MySQL 是业务事实的来源，PostgreSQL 保存对话过程，Milvus 是可以从知识资料重建的检索索引**。BM25 索引在后端进程中按需构建。
+
+对话的主要执行路径如下：
+
+```mermaid
+flowchart TD
+    A[客户发送消息] --> B[识别需求]
+    B -->|订单与退款| C[统一售后 Agent]
+    B -->|产品与政策| D[向量 + BM25 召回]
+    D --> E[RRF 融合 + Reranker 重排]
+    E --> C
+    C --> F[订单与退款工具]
+    F --> G[后端权限和业务校验]
+    G --> C
+    C -->|普通回复| H[返回结果与资料来源]
+    C -->|已提交待审批申请| I[暂停会话，等待人工审批]
+    I --> J[管理员批准或拒绝]
+    J --> K[读取业务结果并恢复会话]
+    K --> H
+```
+
+## 项目展示
+
+### 客户售后工作台
+
+左侧提供订单与退款申请入口，中间显示历史会话，右侧为智能售后对话区。客户可以从查询订单、了解售后政策或申请退款开始，也可以直接描述产品问题。
+
+![SupportFlow 客户售后工作台](pic/img.png)
+
+### 演示数据与体验流程
+
+演示商品覆盖小米、REDMI、米家的手机、电脑、平板、音频、配件、穿戴、网络设备和家电，金额为模拟成交价。
+
+| 数据 | 内容 |
+| --- | --- |
+| 账号 | 两个客户 `customer1`、`customer2`，一个管理员 `admin` |
+| 订单 | 每位客户 20 单，共 40 单，包含不同支付、物流状态及退款期限内外的场景 |
+| 退款申请 | 20 条，待审批、已批准、已拒绝、已退款各 5 条 |
+| 审批与流水 | 15 条审批记录、10 条退款流水，流水包含打款中与成功状态 |
+
+建议从以下流程体验项目：
+
+1. 登录客户账号，在“我的订单”中查看订单和退款资格。
+2. 向助手发送“帮我查询最近的订单”，再选择符合条件的订单并说明退款原因。
+3. 提交申请后，登录管理员账号，在退款申请详情中批准或拒绝。
+4. 返回客户会话查看审批结果，并在申请详情中核对业务状态。
+5. 询问“米家洗衣机童锁怎么使用”或“手机耗电快怎么办”，查看知识回答及资料来源。
+
+页面提交的退款申请可从申请详情查看结果；只有通过对话提交并进入审批节点的申请才会触发该会话的中断与恢复。
+
+## 快速开始
+
+### 1. 准备环境
+
+- Python **3.13+**、uv、Node.js **22.12+** 与 npm。
+- MySQL **8.0+**，创建空业务库，例如 `agent_project`。
+- DeepSeek API Key，用于智能对话。
+- 完整体验还需 PostgreSQL、Milvus Standalone 和百炼 API Key，用于对话持久化、向量召回与重排。
+
+本仓库暂未提供 Docker Compose 一键启动文件，数据库服务需自行准备。未配置 PostgreSQL 连接串时，对话状态使用内存存储，服务重启后丢失；配置了连接串但连接失败时，后端启动会失败。向量服务不可用时，如本地 BM25 能召回资料，检索会降级使用该路结果。
+
+在项目根目录安装后端依赖并复制配置：
 
 ```bash
 uv sync --locked
+```
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+```bash
+# Linux / macOS
+cp .env.example .env
+```
+
+编辑 `.env`，填写业务库和模型配置。以下仅为示例，密码与密钥替换为自己的值：
+
+```dotenv
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=agent_project
+
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+# 可选：覆盖代码中的默认模型
+DEEPSEEK_MODEL=deepseek-v4-flash
+
+DASHSCOPE_API_KEY=your_dashscope_api_key
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIM=1024
+RERANK_MODEL=gte-rerank-v2
+RETRIEVAL_RERANK=true
+
+# .env.example 未包含此项，需要手动添加；留空时使用内存记忆
+LANGGRAPH_PG_DSN=postgresql://langgraph_user:your_pg_password@127.0.0.1:5432/langgraph_db
+
+MILVUS_URI=http://127.0.0.1:19530
+DB_NAME=supportflow
+COLLECTION=supportflow_knowledge
+```
+
+其余配置可保留 `.env.example` 的默认值。`.env` 已被 Git 忽略，不要提交真实密钥。
+
+### 2. 初始化业务数据
+
+确认 MySQL 中已创建配置的空数据库，再执行表结构迁移和演示数据初始化：
+
+```bash
+uv run alembic upgrade head
+uv run python -m supportflow.db.seed.seed_demo
+```
+
+首次创建账号时，终端会输出 `admin`、`customer1`、`customer2` 各自随机生成的密码，请保存用于登录。已有账号不会重置密码。
+
+如需恢复演示订单和退款基线，可以单独运行：
+
+```bash
+uv run python -m supportflow.db.seed.seed_demo --refresh
+```
+
+`--refresh` 会重置预设演示订单的商品明细与退款链路，保留账号密码、登录会话和聊天会话。演示日期以执行时刻为基准。
+
+已有手工建表的数据库需先核对结构并正确登记迁移版本，不要直接按空库流程执行初始建表迁移。
+
+### 3. 导入知识库
+
+资料位于 `src/supportflow/retrieval/data/` 和 `src/supportflow/retrieval/policies/`，支持 Markdown、PDF、DOCX。
+
+```bash
+# 先检查解析和切分，不调用模型或数据库
+uv run python -m supportflow.retrieval.resource2chunks --dry-run
+
+# 生成向量并写入配置的 Milvus 集合，更新同 ID 片段，保留其他记录
+uv run python -m supportflow.retrieval.resource2chunks
+```
+
+如需完全重建知识库，可使用 `--replace`：它会在解析和向量生成成功后删除配置集合的全部旧记录，再写入新资料。分批写入没有跨批次事务，失败后需重新运行。扫描 PDF 需先完成 OCR；更新资料后重启后端，使 BM25 内存索引同步更新。
+
+### 4. 启动后端
+
+Windows PowerShell：
+
+```powershell
+uv run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080 --loop asyncio:SelectorEventLoop
+```
+
+Linux / macOS：
+
+```bash
 uv run uvicorn supportflow.main:app --host 127.0.0.1 --port 8080
 ```
 
-端口用 **8080**：`python -m supportflow` 内置的 8000 在本机绑不上（WinError 10013，
-8000 落在 Windows `winnat` 的保留段里，不是有残留进程占着），前端 vite 的代理目标也是 8080。
+Windows 下使用 PostgreSQL 异步驱动时需要 SelectorEventLoop。后端端口使用 **8080**，与前端代理配置一致。
 
-`--loop asyncio:SelectorEventLoop` 不能省：Agent 的对话记忆存在 PostgreSQL，
-连它的驱动 psycopg 跑不了 Windows 默认的 ProactorEventLoop。uvicorn 自己创建事件循环，
-所以在启动脚本里设 `set_event_loop_policy` 是没用的，只能从命令行或 `uvicorn.run(...)` 传。
-（`--reload` 也能跑通，但那是它在 reload 模式下换循环的副作用，生产不开 reload，别指望它。）
+- 健康检查：<http://127.0.0.1:8080/health>
+- API 文档：<http://127.0.0.1:8080/docs>
 
-访问 http://127.0.0.1:8080/health，预期返回：
+健康检查预期返回 `{"status":"ok","service":"supportflow"}`，仅表示 API 进程正常，不代表数据库、模型或检索链路均可用。
 
-```json
-{"status":"ok","service":"supportflow"}
+### 5. 启动前端
+
+另开终端执行：
+
+```bash
+cd web-vue
+npm ci
+npm run dev
 ```
 
-接口文档：http://127.0.0.1:8080/docs 。Ctrl+C 停止服务。
+访问 <http://127.0.0.1:4173>，使用初始化时生成的账号密码登录。开发服务器将 `/api` 请求代理到后端 `8080` 端口。
 
-`/health` 只表示 API 进程正常，不表示数据库、模型或检索可用。
+### 6. 开发检查
 
-## MySQL 连接
+在项目根目录运行后端测试：
 
-在根目录 `.env` 中配置 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、
-`MYSQL_PASSWORD`、`MYSQL_DATABASE`，字段示例见 `.env.example`。
-本地默认地址为 `127.0.0.1:3306`，数据库为 `agent_project`。
-真实密码只保存在被 Git 忽略的 `.env` 中。
-
-2026-09-18 核对：`cryptography` 已列入项目依赖 —— MySQL 8 默认的 `caching_sha2_password`
-认证需要它，缺了会是 `/health` 返回 200 而 `/login` 直接 500（堆栈里出现 `sha2_rsa_encrypt`）。
-连接检查已通过。
-连接模块位于 `src/supportflow/db/session.py`，使用 asyncmy 和 SQLAlchemy 异步连接池，
-提供 `AsyncSession` 类型的 `get_db` 会话依赖；业务层使用 `await session.execute(...)`
-和 `await session.commit()` 执行查询、显式提交事务。并发任务各用独立会话，
-不在等待模型回复或人工审批期间保持数据库事务。
-
-## PostgreSQL 与 Milvus
-
-这两个都是**可选**的：不启动照样能起服务，只是对应能力降级。
-
-| 服务 | 存什么 | 不启动会怎样 |
-| --- | --- | --- |
-| PostgreSQL | LangGraph 对话记忆（checkpoint） | 退化成进程内存记忆，重启服务后历史消失 |
-| Milvus | 政策语料索引（428 条向量） | 政策检索不可用，Agent 只能答订单 / 退款 |
-
-PostgreSQL 起一个官方镜像容器即可（本项目开发时用的是 `postgres:16`）：
-
-```powershell
-docker run -d --name langgraph-postgres -p 5432:5432 `
-  -e POSTGRES_DB=langgraph_db `
-  -e POSTGRES_USER=langgraph_user `
-  -e POSTGRES_PASSWORD=<自己定一个密码> `
-  -v supportflow-pgdata:/var/lib/postgresql/data `
-  postgres:16
+```bash
+uv run pytest -q
 ```
 
-⚠️ 一定要带 `-v ...:/var/lib/postgresql/data`：不加则数据落在匿名卷上，容器一删对话历史就没了。
+在 `web-vue/` 中检查前端类型与生产构建：
 
-然后在 `.env` 里把连接串指过去（**这一项原先没写进 `.env.example`，不配会静默退化成内存记忆**）：
-
-```
-LANGGRAPH_PG_DSN=postgresql://langgraph_user:<上面的密码>@127.0.0.1:5432/langgraph_db
+```bash
+npm run build
 ```
 
-Milvus 官方需要连带 MinIO 和 etcd 一共三个容器，装法见
-[Milvus 官方文档](https://milvus.io/docs/install_standalone-docker.md)。
-`.env` 里配 `MILVUS_URI`（默认 `http://127.0.0.1:19530`）、`DB_NAME`、`COLLECTION`。
-知识资料放在 `src/supportflow/retrieval/policies/`（政策）和 `data/`（产品知识），
-递归读取 Markdown、PDF、DOCX，按标题层级和法律条款切分；DOCX 同时提取表格，
-PDF 保留来源页码。Markdown 支持 YAML 元信息。默认片段上限 1200 字符（含标题），
-长正文按句末继续切分并保留 120 字符重叠，可通过 `--chunk-size`、`--chunk-overlap` 调整。
-
-```powershell
-# 只解析和切分，不调用模型或数据库
-python -m supportflow.retrieval.resource2chunks --dry-run
-# 清空旧知识数据，重新导入 policies 和 data 全部资料
-python -m supportflow.retrieval.resource2chunks --replace
-# 更新同 ID 的片段，保留其他已有记录
-python -m supportflow.retrieval.resource2chunks
-# 只删除知识集合全部记录，保留集合结构和索引
-python -m supportflow.retrieval.resource2chunks --clear-only
-```
-
-`--replace` 先完成本地解析、全部向量生成和校验，再删除配置的
-`DB_NAME.COLLECTION` 中全部旧记录。分批写入后核对本次 ID 和集合总数，
-保留 `RetrievedChunk` 字段结构；写入不具备跨批次事务，写入失败后需重新运行。
-同名不同格式文件分别入库，文档 ID 包含目录、相对路径和扩展名，避免相互覆盖。
-扫描 PDF 没有文本层时须先 OCR；部分页面无文本时会提示对应页码。
-后端若已建立 BM25 内存索引，更新资料后需重启后端，或在该进程调用
-`clear_index_cache()`，使混合检索同步使用新资料。
-
-## 前端
-
-`web-vue/`（Vue 3）是当前使用的版本；`web/`（React 初版）已于 2026-09-18 从 git 索引移除 ——
-只留在工作区，不再参与版本管理。Vue 版类型检查和生产构建均通过，开发服务器为
-`http://127.0.0.1:4173`，代理目标为后端 8080。先启动后端，再另开终端执行
-`cd web-vue`、`npm ci`（首次安装）、`npm run dev`。
-
-页面与组件已按域分包：`pages/{auth,customer,admin}`、`components/{common,orders,refunds}`。
-客户对话区（发消息、SSE 流式回复、进出会话恢复"等待审批"状态）与退款写操作
-（提交申请 / 批准 / 拒绝）均已接通并做过真机验收，其余未涉及的写操作仍是禁用状态。
-仅构建通过不代表联调已完成 —— 浏览器端验收脚本见 `.workbuddy/tools/browser_acceptance.mjs`。
-
-## 文件的作用
-
-第一版业务表与状态说明见 [数据库结构](docs/database-schema.md)，实体位于 `src/supportflow/models/`。
-已配置 Alembic，初始版本包含七张业务表。新库建表、已有库接入和后续变更见 [数据库迁移说明](docs/database-migrations.md)。自动化测试：`uv run pytest -q`，或 `.venv/Scripts/python.exe -m unittest discover -s tests -v`（2026-09-24 实测：**175 项通过、52 个子用例**）。
-
-- `pyproject.toml`：项目元信息和直接依赖，类似 Maven 的 pom.xml。
-- `uv.lock`：精确依赖版本，协作和部署时复现环境。
-- `src/supportflow/main.py`：FastAPI 应用和路由，类似 Web 后端的入口与 Controller。
-- `src/supportflow/__init__.py`：`supportflow` 启动命令。
-- [项目约定](docs/project-scope.md)：范围、技术栈、模拟规则及评测目标。
-- [分层验收矩阵](docs/acceptance-cases.md)：后续实现的预期行为。
-
-存储方案：MySQL 保存业务数据与会话归属，PostgreSQL 保存 LangGraph 状态，Milvus 保存政策索引。
-
-演示数据入口：`python -m supportflow.db.seed.seed_demo`。已有数据改成新的演示基线时运行
-`python -m supportflow.db.seed.seed_demo --refresh`，在一个事务内同步恢复订单、商品明细、
-退款申请、审批和流水，时间统一锚定到本次执行时刻。只刷新声明的演示订单；已有账号密码、
-登录会话和普通聊天保留。单独的 `seed_users` / `seed_orders` / `seed_refunds` 入口仍可使用。
-
-商品统一为小米、REDMI、米家，涵盖手机、电脑、平板、音频、配件、穿戴、网络设备和家电；
-金额均为模拟成交价。客户只有 `customer1`、`customer2`，每人 20 单；另保留 `admin` 供审批。
-40 单覆盖未支付、待发货、运输中、已签收、14 天期限内/外、多商品、多件数量和整单退款。
-20 条退款申请包含待审批、已批准、已拒绝、已退款各 5 条；配套 15 条审批和 10 条流水
-（打款中、成功各 5 条），没有打款失败或重试数据。成功时订单、申请和流水状态同步。
-核对真实数据库可运行 `.venv/Scripts/python.exe .workbuddy/tools/verify_demo_dataset.py`。
-
-下一步：补一键启动的 compose（把 MySQL / PostgreSQL / Milvus 一次装好，免去手装三个数据库）、面向服务器的部署脚本，以及 LangSmith 评测报告。
-
-参考：[FastAPI 入门](https://fastapi.tiangolo.com/tutorial/first-steps/)、[uv 依赖管理](https://docs.astral.sh/uv/concepts/projects/dependencies/)。
+测试覆盖登录、权限隔离、订单与退款规则、会话流式输出、Agent 路由、数据库迁移和知识检索等模块。离线测试使用模拟模型与业务环境，真实模型和数据库的端到端行为仍需按演示流程验证。
