@@ -1877,6 +1877,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "fonttools" },
+    { name = "httpx" },
     { name = "jieba" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -1898,7 +1899,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1911,6 +1911,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50.0.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "fonttools", specifier = ">=4.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "langchain", specifier = ">=1.4.0" },
     { name = "langchain-core", specifier = ">=1.6.3" },
@@ -1932,7 +1933,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]

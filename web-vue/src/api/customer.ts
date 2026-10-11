@@ -97,7 +97,7 @@ export function deleteConversation(conversationId: string): Promise<Record<strin
  * GET /customer/conversations/{id}/messages —— 历史消息。
  *
  * ⚠️ `offset=0` 拿的是**最早**的那些，不是最新的；要最新一段得先知道 total
- * 再倒着算，或者像首页那样一次性把 limit 拉满。
+ * 再倒着算；首页通过 latestHistoryPage 读取最新 100 条。
  */
 export function fetchConversationMessages(
   conversationId: string,
@@ -126,10 +126,11 @@ export function sendConversationMessage(conversationId: string, content: string)
 /**
  * POST /customer/conversations/{id}/messages/stream —— 流式发一条消息。
  *
- * 后端一个 SSE 连接里只发两种事件（见 `api/customer/conversations.py`）：
+ * 后端的 SSE 事件（见 `api/customer/conversations.py`）：
  *
  *     event: delta   data: {"text": "增量文字"}
  *     event: done    data: {…整个 MessageTurnOut…}
+ *     event: error   data: {"status": 502, "message": "错误说明"}
  *
  * 也就是说：`delta` 是模型正在往外吐的字，`done` 是本轮跑完后**跟非流式接口
  * 一模一样的那个对象**。前端不用自己拼结果，拿到 `done` 直接当非流式的结果用。
@@ -137,11 +138,9 @@ export function sendConversationMessage(conversationId: string, content: string)
  * 注意点：
  * - 只有 `delta` 里的字是模型已经说出口的；**工具调用、检索过程都没有事件**，
  *   所以"发出去 → 第一个字到"之间仍然是一段没有反馈的空白。
- * - 出错时后端不会走 HTTP 状态码（响应的 200 已经发出去了），而是直接断流；
- *   调用方要靠"stream 结束但没等到 done"来判断这一轮失败。
+ * - error 事件转成 ApiError；断流却没等到 done 时，页面立即读取历史确认后台状态。
  * - 传 `signal` 可以中途取消（切会话、组件卸载时用）。取消会让读取循环抛
- *   `AbortError`，连接真的断开，后端发现写不出去也会跟着停 —— 所以调用方
- *   要按 `AbortError` 把它识别成"我们自己掐的"，别当成发送失败。
+ *   `AbortError`，但后台图会继续；页面之后通过历史快照恢复。
  */
 export async function* streamConversationMessage(
   conversationId: string,
@@ -193,6 +192,13 @@ export async function* streamConversationMessage(
 
 /** SSE 事件 -> 业务事件；认不出来的事件直接丢掉（不猜、不报错）。 */
 function toStreamEvent(item: SseEvent): StreamEvent {
+  if (item.event === 'error') {
+    const payload = JSON.parse(item.data) as { status?: unknown; message?: unknown }
+    throw new ApiError(
+      typeof payload.status === 'number' ? payload.status : 502,
+      typeof payload.message === 'string' ? payload.message : '本轮回复失败，请查看历史消息确认结果',
+    )
+  }
   if (item.event === 'delta') {
     const payload = JSON.parse(item.data) as { text?: unknown }
     return { type: 'delta', text: typeof payload.text === 'string' ? payload.text : '' }

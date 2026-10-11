@@ -10,8 +10,9 @@ Intent = Literal[
     "order_query", "refund_request", "refund_query",
     "product_support", "policy_question", "unknown",
 ]
-NextNode = Literal["support_agent", "retrieve_knowledge", "wait_for_approval", "end"]
+NextNode = Literal["support_agent", "retrieve_knowledge", "search_web", "wait_for_approval", "end"]
 RetrievalStatus = Literal["not_requested", "unavailable", "empty", "ready"]
+WebSearchStatus = Literal["not_requested", "unavailable", "empty", "ready"]
 
 
 class KnowledgeState(TypedDict):
@@ -30,6 +31,12 @@ class RetrievedDocument(TypedDict):
     score: NotRequired[float]
 
 
+class WebSource(TypedDict):
+    title: str
+    url: str
+    content: str
+
+
 class SupportState(MessagesState):
     # messages 由 add_messages 合并；其他字段整体替换，不自动深度合并。
     current_intent: Intent
@@ -37,6 +44,8 @@ class SupportState(MessagesState):
     knowledge: KnowledgeState
     retrieved_documents: list[RetrievedDocument]
     retrieval_status: RetrievalStatus
+    web_search_status: WebSearchStatus
+    web_sources: list[WebSource]
     pending_approval: str | None
 
 
@@ -49,6 +58,8 @@ class SupportStateUpdate(TypedDict, total=False):
     knowledge: KnowledgeState
     retrieved_documents: list[RetrievedDocument]
     retrieval_status: RetrievalStatus
+    web_search_status: WebSearchStatus
+    web_sources: list[WebSource]
     pending_approval: str | None
 
 
@@ -61,5 +72,7 @@ def initial_state() -> SupportState:
         "knowledge": {"question": None, "product_model": None},
         "retrieved_documents": [],
         "retrieval_status": "not_requested",
+        "web_search_status": "not_requested",
+        "web_sources": [],
         "pending_approval": None,
     }

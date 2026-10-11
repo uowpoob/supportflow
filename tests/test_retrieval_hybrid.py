@@ -163,7 +163,7 @@ async def test_graph_node_uses_real_hybrid_entrypoint(recalls, reranker, outcome
     result = await nodes.retrieve_knowledge(state, Runtime())
     expected_status = "ready" if outcome in ("fused", "degraded") else outcome
     assert result["retrieval_status"] == expected_status
-    assert result["next_node"] == "support_agent"
+    assert result["next_node"] == ("support_agent" if expected_status == "ready" else "search_web")
     assert all(item["chunk_id"] != "old" for item in result["retrieved_documents"])
     if outcome == "fused":
         assert result["retrieved_documents"][0]["chunk_id"] == "shared"

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from supportflow.agents.graph.state import RetrievalStatus
+from supportflow.agents.graph.state import RetrievalStatus, WebSearchStatus
 from supportflow.models.entities import Conversation
 from supportflow.schemas.common import UtcInstant
 
@@ -51,16 +51,9 @@ class ChatMessageOut(BaseModel):
     content: str
 
 
-class ConversationMessagesOut(BaseModel):
-    conversation_id: UUID
-    items: list[ChatMessageOut]
-    total: int
-    offset: int
-    limit: int
-    status: Literal["completed", "waiting_approval"]
-    pending_request_key: str | None = None
-    # 该会话是否正在执行本轮（流式输出尚未结束）。前端据此显示"正在回复…"，
-    running: bool = False
+class ActiveTurnOut(BaseModel):
+    user_message: ChatMessageOut
+    assistant_text: str = ""
 
 
 class RetrievedSourceOut(BaseModel):
@@ -72,6 +65,29 @@ class RetrievedSourceOut(BaseModel):
     score: float | None = None
 
 
+class WebSourceOut(BaseModel):
+    title: str
+    url: str
+
+
+class ConversationMessagesOut(BaseModel):
+    conversation_id: UUID
+    items: list[ChatMessageOut]
+    total: int
+    offset: int
+    limit: int
+    status: Literal["completed", "waiting_approval"]
+    pending_request_key: str | None = None
+    running: bool = False
+    # 尚未写入 checkpoint 的流式文字；客户端轮询时整体替换草稿。
+    active_turn: ActiveTurnOut | None = None
+    retrieval_status: RetrievalStatus = "not_requested"
+    retrieved_sources: list[RetrievedSourceOut] = Field(default_factory=list)
+    web_search_status: WebSearchStatus = "not_requested"
+    web_sources: list[WebSourceOut] = Field(default_factory=list)
+    run_error: str | None = None
+
+
 class MessageTurnOut(BaseModel):
     conversation_id: UUID
     messages: list[ChatMessageOut]
@@ -79,5 +95,7 @@ class MessageTurnOut(BaseModel):
     pending_request_key: str | None = None
     retrieval_status: RetrievalStatus
     retrieved_sources: list[RetrievedSourceOut]
+    web_search_status: WebSearchStatus = "not_requested"
+    web_sources: list[WebSourceOut] = Field(default_factory=list)
     # 首轮后自动生成的标题；非首轮或生成失败时为 None，前端不更新。
     title: str | None = None

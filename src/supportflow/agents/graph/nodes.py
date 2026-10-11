@@ -15,6 +15,7 @@ from supportflow.agents.graph.context import SupportContext
 from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
+from supportflow.agents.tools.web_search import WebSearchUnavailable, search_web as web_search
 from supportflow.core.config import settings
 from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
 from supportflow.retrieval.types import RetrievalUnavailable
@@ -69,7 +70,25 @@ async def understand_and_route(
         # 每轮重新检索，包含转回退款或切换商品的情况，禁止复用旧证据。
         "retrieved_documents": [],
         "retrieval_status": "not_requested",
+        "web_search_status": "not_requested",
+        "web_sources": [],
     }
+
+
+def _knowledge_query(state: SupportState) -> str:
+    """优先用路由整理的问题；缺失时用最后一条用户消息，避免静默跳过兜底。"""
+    knowledge = state.get("knowledge", {})
+    question = (knowledge.get("question") or "").strip()
+    if not question:
+        question = next((
+            message.text.strip() for message in reversed(state.get("messages", []))
+            if isinstance(message, HumanMessage) and message.text.strip()
+        ), "")
+    product_model = (knowledge.get("product_model") or "").strip()
+    # 当前库未存统一型号字段，补入查询上下文，不声称这是严格的型号过滤。
+    if question and product_model and product_model.casefold() not in question.casefold():
+        question = f"商品型号：{product_model}\n问题：{question}"
+    return question
 
 
 async def retrieve_knowledge(
@@ -79,16 +98,13 @@ async def retrieve_knowledge(
     update: SupportStateUpdate = {
         "retrieved_documents": [],
         "retrieval_status": "empty",
-        "next_node": "support_agent",
+        "web_search_status": "not_requested",
+        "web_sources": [],
+        "next_node": "search_web",
     }
-    knowledge = state.get("knowledge", {})
-    question = (knowledge.get("question") or "").strip()
+    question = _knowledge_query(state)
     if not question:
         return update
-    product_model = (knowledge.get("product_model") or "").strip()
-    # 当前库未存统一型号字段，补入查询上下文，不声称这是严格的型号过滤。
-    if product_model and product_model.casefold() not in question.casefold():
-        question = f"商品型号：{product_model}\n问题：{question}"
     try:
         # 重排开关默认开（见 config.RETRIEVAL_RERANK）；重排自己失败时会退回融合顺序，
         # 不会因为这一个环节挂掉就让本轮拿不到证据。
@@ -99,6 +115,29 @@ async def retrieve_knowledge(
         return update
     update["retrieved_documents"] = documents
     update["retrieval_status"] = "ready" if documents else "empty"
+    if documents:
+        update["next_node"] = "support_agent"
+    return update
+
+
+async def search_web(
+    state: SupportState, runtime: Runtime[SupportContext],
+) -> SupportStateUpdate:
+    """本地检索失败后搜索公开网页；保留本地状态，供回答和页面披露来源。"""
+    update: SupportStateUpdate = {
+        "web_sources": [], "web_search_status": "empty", "next_node": "support_agent",
+    }
+    question = _knowledge_query(state)
+    if not question:
+        return update
+    try:
+        sources = await web_search(question)
+    except WebSearchUnavailable as exc:
+        logger.warning("%s", exc)
+        update["web_search_status"] = "unavailable"
+        return update
+    update["web_sources"] = sources
+    update["web_search_status"] = "ready" if sources else "empty"
     return update
 
 
@@ -114,6 +153,8 @@ async def support_agent(
             "query": state["knowledge"],
             "status": state["retrieval_status"],
             "documents": state["retrieved_documents"],
+            "web_search_status": state.get("web_search_status", "not_requested"),
+            "web_sources": state.get("web_sources", []),
         }, ensure_ascii=False)
 
     agent = build_support_agent(

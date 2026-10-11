@@ -94,6 +94,8 @@ async def test_routes_and_clears_previous_evidence(monkeypatch, intent, expected
     state["knowledge"] = {"question": "旧问题", "product_model": "旧型号"}
     state["retrieved_documents"] = [{"content": "上轮证据"}]
     state["retrieval_status"] = "ready"
+    state["web_search_status"] = "ready"
+    state["web_sources"] = [{"title": "上轮网页", "url": "https://old.example", "content": "旧摘要"}]
     before = deepcopy(state)
     result = await nodes.understand_and_route(state, Runtime(context=context()))
     assert result["next_node"] == expected
@@ -101,6 +103,8 @@ async def test_routes_and_clears_previous_evidence(monkeypatch, intent, expected
     assert result["knowledge"] == {"question": None, "product_model": None}
     assert result["retrieved_documents"] == []
     assert result["retrieval_status"] == "not_requested"
+    assert result["web_search_status"] == "not_requested"
+    assert result["web_sources"] == []
     assert model.ainvoke.await_args.args[0][1:] == state["messages"]
     assert "messages" not in result
     assert state == before
@@ -155,7 +159,7 @@ async def test_retrieval_node_updates_only_current_evidence(monkeypatch, outcome
     result = await nodes.retrieve_knowledge(state, Runtime(context=context()))
     assert result["retrieval_status"] == outcome
     assert result["retrieved_documents"] == ([document] if outcome == "ready" else [])
-    assert result["next_node"] == "support_agent"
+    assert result["next_node"] == ("support_agent" if outcome == "ready" else "search_web")
     assert state == before
     assert "messages" not in result
     # 节点按配置开关决定要不要重排，断言跟着开关走，避免 .env 关掉重排时误报。
@@ -199,6 +203,7 @@ def use_model(monkeypatch, responses):
 @pytest.mark.asyncio
 async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(monkeypatch):
     monkeypatch.setattr(nodes, "retrieve", AsyncMock(side_effect=nodes.RetrievalUnavailable("离线模拟")))
+    monkeypatch.setattr(nodes, "web_search", AsyncMock(side_effect=nodes.WebSearchUnavailable("离线模拟")))
     router = mock_router(monkeypatch, "order_query")
     model = use_model(monkeypatch, [
         AIMessage(content="", tool_calls=[{"name": "list_my_orders", "args": {}, "id": "orders-1"}]),
@@ -225,6 +230,7 @@ async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(mo
     second = await graph.ainvoke({"messages": [("user", "X1 怎么开机？")]}, config, context=ctx)
     assert len(second["messages"]) == 6
     assert second["retrieval_status"] == "unavailable"
+    assert second["web_search_status"] == "unavailable"
     assert '"status": "unavailable"' in model.seen[2][0].content
 
     router.ainvoke.return_value = UnderstandAndRouteOutput(intent="refund_query")
@@ -233,6 +239,8 @@ async def test_real_agent_graph_preserves_tool_pairs_and_memory_across_topics(mo
     assert [m.type for m in third["messages"]].count("tool") == 2
     assert third["next_node"] == "end"
     assert third["retrieval_status"] == "not_requested"
+    assert third["web_search_status"] == "not_requested"
+    assert third["web_sources"] == []
     assert third["knowledge"] == {"question": None, "product_model": None}
     assert "本轮检索数据" not in model.seen[3][0].content
     assert not any(m.type == "system" for m in third["messages"])
@@ -388,6 +396,8 @@ async def test_retrieved_sources_reach_agent_but_do_not_pollute_history(monkeypa
         return {"retrieved_documents": [document], "retrieval_status": "ready", "next_node": "support_agent"}
 
     monkeypatch.setattr(nodes, "retrieve_knowledge", fake_retrieval)
+    web_search = AsyncMock(side_effect=AssertionError("本地检索成功不应联网搜索"))
+    monkeypatch.setattr(nodes, "web_search", web_search)
     model = use_model(monkeypatch, [AIMessage(content="请先连接电源。来源：X1 说明书")])
     result = await build_support_graph().ainvoke(
         {"messages": [("user", "X1 怎么开机？")]}, context=context(),
@@ -396,3 +406,63 @@ async def test_retrieved_sources_reach_agent_but_do_not_pollute_history(monkeypa
     assert json.dumps(document, ensure_ascii=False) in system_prompt
     assert len(result["messages"]) == 2
     assert result["retrieved_documents"] == [document]
+    web_search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local_status", ["empty", "unavailable"])
+async def test_local_retrieval_miss_searches_web_and_preserves_source_origin(monkeypatch, local_status):
+    mock_router(monkeypatch, "product_support", knowledge_question="X1 怎么开机？", product_model="X1")
+    retrieval = AsyncMock(return_value=[])
+    if local_status == "unavailable":
+        retrieval.side_effect = nodes.RetrievalUnavailable("离线模拟")
+    monkeypatch.setattr(nodes, "retrieve", retrieval)
+    source = {"title": "X1 官方帮助", "url": "https://support.example/x1", "content": "连接电源后长按开机键。"}
+    web_search = AsyncMock(return_value=[source])
+    monkeypatch.setattr(nodes, "web_search", web_search)
+    model = use_model(monkeypatch, [AIMessage(content="未成功检索到本地知识库资料，以下内容参考网上公开信息。")])
+    result = await build_support_graph().ainvoke(
+        {"messages": [("user", "X1 怎么开机？")]}, context=context(),
+    )
+    assert result["retrieval_status"] == local_status
+    assert result["retrieved_documents"] == []
+    assert result["web_search_status"] == "ready"
+    assert result["web_sources"] == [source]
+    assert json.dumps(source, ensure_ascii=False) in model.seen[0][0].content
+    assert len(result["messages"]) == 2
+    web_search.assert_awaited_once_with("X1 怎么开机？")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["empty", "unavailable"])
+async def test_web_failure_does_not_fail_conversation_or_claim_online_evidence(monkeypatch, outcome):
+    mock_router(monkeypatch, "policy_question", knowledge_question="退货运费由谁承担？")
+    monkeypatch.setattr(nodes, "retrieve", AsyncMock(return_value=[]))
+    search = AsyncMock(return_value=[])
+    if outcome == "unavailable":
+        search.side_effect = nodes.WebSearchUnavailable("测试搜索服务不可用")
+    monkeypatch.setattr(nodes, "web_search", search)
+    model = use_model(monkeypatch, [AIMessage(content="当前缺少可用资料。")])
+    result = await build_support_graph().ainvoke(
+        {"messages": [("user", "退货运费由谁承担？")]}, context=context(),
+    )
+    assert result["web_search_status"] == outcome
+    assert result["web_sources"] == []
+    assert '"web_sources": []' in model.seen[0][0].content
+    assert "不能声称已搜索到网上信息或编造来源链接" in model.seen[0][0].content
+    assert result["next_node"] == "end"
+
+
+@pytest.mark.asyncio
+async def test_missing_router_question_uses_latest_user_message(monkeypatch):
+    retrieval = AsyncMock(return_value=[])
+    search = AsyncMock(return_value=[])
+    monkeypatch.setattr(nodes, "retrieve", retrieval)
+    monkeypatch.setattr(nodes, "web_search", search)
+    state = initial_state()
+    state["messages"] = [HumanMessage(content="旧问题"), AIMessage(content="旧回答"), HumanMessage(content="当前问题")]
+    update = await nodes.retrieve_knowledge(state, Runtime(context=context()))
+    assert update["next_node"] == "search_web"
+    await nodes.search_web({**state, **update}, Runtime(context=context()))
+    retrieval.assert_awaited_once_with("当前问题", rerank=nodes.settings.RETRIEVAL_RERANK)
+    search.assert_awaited_once_with("当前问题")

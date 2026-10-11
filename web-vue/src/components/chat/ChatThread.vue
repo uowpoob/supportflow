@@ -18,22 +18,9 @@ const props = defineProps<{
   pending?: boolean
   /** 刚发出去、还没落库的那句话，先显示出来 */
   optimistic?: string
-  /**
-   * 流式进行中的助手文字，**逐字增长**。
-   *
-   * 它跟 `messages` 是两回事：`messages` 里的东西服务端已经存好了，
-   * 而这个只是屏幕上暂时长出来的草稿 —— 本轮结束（`done` 事件）时会整段
-   * 被服务端返回的消息替换掉，所以不用也不能在这里给它 id。
-   */
+  /** SSE 增量或历史接口恢复的助手草稿，完成后由正式消息替换。 */
   streaming?: string
-  /**
-   * 后端说这个会话正有一轮在跑，但**这个浏览器不是发起方** ——
-   * 典型场景是发送过程中刷新了页面，连接断了而服务端还在继续。
-   *
-   * 跟 `pending` 的区别：`pending` 是本页自己发的请求在等回音（能等到 `done`），
-   * 这里等不到任何东西，只能靠重新读历史发现结果。
-   * 两者可能同时为真（切走再切回来的那一小会儿），所以文案让它们一致、不互相覆盖。
-   */
+  /** 后台运行中，当前页面通过轮询快照恢复进度。 */
   runningElsewhere?: boolean
 }>()
 
@@ -120,7 +107,7 @@ onMounted(scrollToBottom)
         <AppIcon name="robot" :size="16" />
       </span>
       <div class="bubble bubble--assistant bubble--pending">
-        {{ runningElsewhere ? '正在回复（页面刷新过，完成后会出现在这里）' : '正在回复…' }}
+        {{ runningElsewhere ? '正在回复，已恢复后台运行进度…' : '正在回复…' }}
       </div>
     </div>
   </div>

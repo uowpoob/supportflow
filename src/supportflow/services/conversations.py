@@ -19,10 +19,12 @@ from supportflow.models.entities import Conversation
 from supportflow.repository import conversations as conversation_repo
 from supportflow.repository import refund as refund_repo
 from supportflow.schemas.conversations import (
-    ChatMessageOut, ConversationMessagesOut, MessageTurnOut, RetrievedSourceOut,
+    ActiveTurnOut, ChatMessageOut, ConversationMessagesOut, MessageTurnOut, RetrievedSourceOut,
+    WebSourceOut,
 )
 
 logger = logging.getLogger(__name__)
+TURN_FAILURE = "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送"
 
 
 class ConversationError(Exception):
@@ -85,13 +87,24 @@ def _turn_from_state(
         status="waiting_approval" if state.get("pending_approval") else "completed",
         pending_request_key=state.get("pending_approval"),
         retrieval_status=state.get("retrieval_status", "not_requested"),
-        retrieved_sources=[RetrievedSourceOut(
-            document_id=item["document_id"], chunk_id=item["chunk_id"],
-            title=item["title"], source=item["source"],
-            section=item.get("section"), score=item.get("score"),
-        ) for item in state.get("retrieved_documents", [])],
+        retrieved_sources=_retrieved_sources(state),
+        web_search_status=state.get("web_search_status", "not_requested"),
+        web_sources=_web_sources(state),
         title=title,
     )
+
+
+def _retrieved_sources(state: SupportState) -> list[RetrievedSourceOut]:
+    return [RetrievedSourceOut(
+        document_id=item["document_id"], chunk_id=item["chunk_id"],
+        title=item["title"], source=item["source"],
+        section=item.get("section"), score=item.get("score"),
+    ) for item in state.get("retrieved_documents", [])]
+
+
+def _web_sources(state: SupportState) -> list[WebSourceOut]:
+    return [WebSourceOut(title=item["title"], url=item["url"])
+            for item in state.get("web_sources", [])]
 
 
 class ConversationChat:
@@ -101,6 +114,21 @@ class ConversationChat:
         self.graph = graph
         # 最小的单进程并发保护；多进程锁与请求重试幂等留给运行状态模块。
         self._running: set[str] = set()
+        self._active_turns: dict[str, ActiveTurnOut] = {}
+        self._active_message_ids: dict[str, str | None] = {}
+        self._run_errors: dict[str, str] = {}
+        # 保留后台任务的强引用，连接结束后仍可完成 checkpoint 与业务写入。
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def aclose(self) -> None:
+        """关闭 checkpointer 前给后台任务留出收尾时间。"""
+        if not self._tasks:
+            return
+        _, pending = await asyncio.wait(self._tasks, timeout=30)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _generate_title(self, user_message: str) -> str | None:
         """用模型把首轮对话概括成一句短标题；失败时返回 None，不影响本轮结果。"""
@@ -170,6 +198,7 @@ class ConversationChat:
         # 上面 _require_conversation 已经确认存在，这里 deleted 理应为 True；留个防御以防并发删除。
         if not deleted:
             return
+        self._run_errors.pop(conversation_id, None)
         await self._delete_checkpoint(conversation_id)
 
     async def _delete_checkpoint(self, conversation_id: str) -> None:
@@ -190,19 +219,35 @@ class ConversationChat:
         await _require_conversation(db, user_id, conversation_id)
         # 结束认证/归属查询的只读事务，再读取 PostgreSQL checkpoint。
         await db.commit()
+        was_running = conversation_id in self._running
         try:
             snapshot = await self.graph.aget_state({"configurable": {"thread_id": conversation_id}})
+            if was_running and conversation_id not in self._running:
+                # 执行恰好在读取过程中完成时，再读最终 checkpoint 后才能停止轮询。
+                snapshot = await self.graph.aget_state({"configurable": {"thread_id": conversation_id}})
         except Exception as exc:
             logger.warning("读取会话历史失败（%s）", type(exc).__name__)
             raise ConversationError("会话历史暂不可用", status_code=503) from exc
         messages = _public_messages(snapshot.values.get("messages", []))
         pending_request_key = snapshot.values.get("pending_approval")
+        active_turn = self._active_turns.get(conversation_id)
+        if active_turn:
+            active_turn = active_turn.model_copy(deep=True)
+            output_id = self._active_message_ids.get(conversation_id)
+            if output_id and any(item.id == output_id for item in messages):
+                active_turn.assistant_text = ""
         return ConversationMessagesOut(
             conversation_id=conversation_id, items=messages[offset:offset + limit],
             total=len(messages), offset=offset, limit=limit,
             status="waiting_approval" if pending_request_key else "completed",
             pending_request_key=pending_request_key,
             running=conversation_id in self._running,
+            active_turn=active_turn,
+            retrieval_status=snapshot.values.get("retrieval_status", "not_requested"),
+            retrieved_sources=_retrieved_sources(snapshot.values),
+            web_search_status=snapshot.values.get("web_search_status", "not_requested"),
+            web_sources=_web_sources(snapshot.values),
+            run_error=self._run_errors.get(conversation_id),
         )
 
     async def send_message(
@@ -213,6 +258,7 @@ class ConversationChat:
             raise ConversationError("本会话正在回复，请等待本轮完成", status_code=409)
         # 检查与添加之间没有 await；同一事件循环中的请求不会同时进入。
         self._running.add(conversation_id)
+        self._run_errors.pop(conversation_id, None)
         try:
             config = {"configurable": {"thread_id": conversation_id}}
             snapshot = await self.graph.aget_state(config)
@@ -242,18 +288,6 @@ class ConversationChat:
         finally:
             self._running.discard(conversation_id)
 
-    # async def stream_message(
-    #     self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
-    # ) -> AsyncIterator[str]:
-    #     """兼容仅消费文字片段的调用方。"""
-    #     stream = self.stream_turn(db, user_id, conversation_id, content)
-    #     try:
-    #         async for event in stream:
-    #             if isinstance(event, str):
-    #                 yield event
-    #     finally:
-    #         await stream.aclose()
-##########################################################################################################################################
     async def stream_turn(
         self, db: AsyncSession, user_id: int, conversation_id: str, content: str,
     ) -> AsyncIterator[str | MessageTurnOut]:
@@ -267,31 +301,31 @@ class ConversationChat:
         if conversation_id in self._running:
             raise ConversationError("本会话正在回复，请等待本轮完成", status_code=409)
         self._running.add(conversation_id)
-
-        config = {"configurable": {"thread_id": conversation_id}}
-        snapshot = await self.graph.aget_state(config)
-        if snapshot.values.get("pending_approval"):
+        self._run_errors.pop(conversation_id, None)
+        try:
+            config = {"configurable": {"thread_id": conversation_id}}
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.values.get("pending_approval"):
+                raise ConversationError("本会话正在等待管理员审批", status_code=409)
+            was_empty = not snapshot.values.get("messages")
+            await conversation_repo.touch_conversation(db, user_id, conversation_id)
+            await db.commit()
+            message = HumanMessage(id=str(uuid4()), content=content)
+            worker_db = SessionLocal()
+        except BaseException:
+            # 启动阶段还没有后台任务，取消或 checkpoint 失败也必须释放锁。
             self._running.discard(conversation_id)
-            raise ConversationError("本会话正在等待管理员审批", status_code=409)
-        # 本轮开始前还没有任何消息 = 这是首轮，结束后值得生成标题。
-        was_empty = not snapshot.values.get("messages")
-        # 认证/归属与活动时间更新都在请求的 db 上做，做完即提交、不再碰它。
-        await conversation_repo.touch_conversation(db, user_id, conversation_id)
-        await db.commit()
+            raise
 
-        message = HumanMessage(id=str(uuid4()), content=content)
-
-        # 图执行用独立的数据库会话：即使客户端断开、请求结束，这个会话也不受影响，
-        # 工具仍能正常读写 MySQL。由后台任务负责打开和关闭。
-        worker_db = SessionLocal()
-        queue: asyncio.Queue = asyncio.Queue()
+        active = ActiveTurnOut(user_message=ChatMessageOut(
+            id=message.id, role="user", content=content,
+        ))
+        self._active_turns[conversation_id] = active
+        queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+        connected = True
 
         async def _run_graph() -> None:
-            """在后台跑完整个图，把结果与收尾都做完，再释放锁。
-
-            无论客户端是否还在，它都会执行到最后：正常产出文字时放进 queue，
-            跑完产出完整结果，最后关闭独立会话、释放 _running 锁。
-            """
+            terminal: tuple[str, object] = ("error", RuntimeError(TURN_FAILURE))
             try:
                 graph_stream = self.graph.astream(
                     {"messages": [message]},
@@ -301,31 +335,55 @@ class ConversationChat:
                     subgraphs=True,
                     version="v2",
                 )
-                async for part in graph_stream:
-                    if part["type"] != "messages":
-                        continue
-                    chunk, metadata = part["data"]
-                    # 意图识别也会调用模型；只把内部 Agent 的 model 节点展示给客户。
-                    if metadata.get("langgraph_node") != "model":
-                        continue
-                    if isinstance(chunk, AIMessageChunk) and chunk.text:
-                        await queue.put(("delta", str(chunk.text)))
+                try:
+                    async for part in graph_stream:
+                        if part["type"] != "messages":
+                            continue
+                        chunk, metadata = part["data"]
+                        # 意图识别也会调用模型；只展示内部 Agent 的模型文字。
+                        if metadata.get("langgraph_node") != "model":
+                            continue
+                        if isinstance(chunk, AIMessageChunk) and chunk.text:
+                            text = str(chunk.text)
+                            previous_id = self._active_message_ids.get(conversation_id)
+                            if chunk.id and chunk.id != previous_id:
+                                active.assistant_text = ""
+                                self._active_message_ids[conversation_id] = chunk.id
+                            active.assistant_text += text
+                            if connected:
+                                queue.put_nowait(("delta", text))
+                finally:
+                    await graph_stream.aclose()
                 snapshot = await self.graph.aget_state(config)
                 title = await self._maybe_generate_title(
                     worker_db, user_id, conversation_id, content, was_empty
                 )
-                await queue.put(("done", _turn_from_state(
+                terminal = ("done", _turn_from_state(
                     snapshot.values, conversation_id, message.id, title
-                )))
+                ))
+            except asyncio.CancelledError:
+                self._run_errors[conversation_id] = TURN_FAILURE
+                raise
             except Exception as exc:
                 # 工具可能已经写库；失败时不自动重新执行本轮。
                 logger.warning("流式对话执行失败（%s）", type(exc).__name__)
-                await queue.put(("error", exc))
+                self._run_errors[conversation_id] = TURN_FAILURE
+                terminal = ("error", exc)
             finally:
-                await worker_db.close()
-                self._running.discard(conversation_id)
+                try:
+                    await worker_db.close()
+                except Exception:
+                    logger.exception("关闭对话后台数据库会话失败")
+                finally:
+                    self._running.discard(conversation_id)
+                    self._active_turns.pop(conversation_id, None)
+                    self._active_message_ids.pop(conversation_id, None)
+                    if connected:
+                        queue.put_nowait(terminal)
 
         task = asyncio.create_task(_run_graph())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         try:
             while True:
                 kind, payload = await queue.get()
@@ -336,13 +394,12 @@ class ConversationChat:
                     break
                 elif kind == "error":
                     raise ConversationError(
-                        "本轮对话未完成，请先查看历史消息及订单、退款状态后再决定是否重新发送",
+                        TURN_FAILURE,
                         status_code=502,
                     ) from payload
         finally:
-            # 正常或出错路径：等后台任务收尾（关会话、释放锁）再返回。
-            # 不会真正等待，后台任务得以继续在后台跑完、照常落库。
-            await task
+            # 请求取消不能传播到后台任务，也不再向无人消费的队列追加文字。
+            connected = False
 
     async def resume_approval(
         self, db: AsyncSession, user_id: int, conversation_id: str, request_key: str,

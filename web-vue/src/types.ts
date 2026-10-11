@@ -165,6 +165,13 @@ export interface RefundDecisionPayload {
 /** 对齐 `agents/graph/state.py::RetrievalStatus` —— 本轮检索的结果状态 */
 export type RetrievalStatus = 'not_requested' | 'unavailable' | 'empty' | 'ready'
 
+export type WebSearchStatus = 'not_requested' | 'unavailable' | 'empty' | 'ready'
+
+export interface WebSource {
+  title: string
+  url: string
+}
+
 /** 对齐后端 `schemas/conversations.py::ChatMessageOut` —— 只有这两种角色 */
 export type ChatRole = 'user' | 'assistant'
 
@@ -196,21 +203,7 @@ export interface ConversationPage {
   limit: number
 }
 
-/**
- * 对齐后端 `schemas/conversations.py::ConversationMessagesOut` —— 一页历史消息。
- *
- * `status` / `pending_request_key` 不是"顺便带的"：**刷新页面之后页面只剩这个接口可用**，
- * 必须靠它把"这个会话正停在等审批"认回来。少了它，用户会一直点发送、一直被 409 挡回来。
- *
- * ⚠️ `status` 只有两个值，**不包含"正在跑"**。后端确实知道（进程里有个 `_running` 集合，
- * 同一个会话在跑就返回 409），但历史接口没有把它暴露出来。所以：
- * - "等审批"能在进会话时认出来（服务端明确告诉我们了）；
- * - "正在回复但这一轮的连接已经断了"**认不出来**，只能等一次发送被 409 挡回来才发现。
- *
- * 这是刻意的降级，不是漏写：猜不出来不如不猜。要彻底解决得让后端补一个字段
- * （`ConversationMessagesOut` 加 `running: bool`），前端这里加一行即可。
- * 详见文件末尾 `ConversationRunningStatus` 那段说明。
- */
+/** 一页历史消息及当前运行快照；刷新后用它恢复草稿、来源和输入框状态。 */
 export interface ConversationMessages {
   conversation_id: string
   items: ChatMessage[]
@@ -223,6 +216,12 @@ export interface ConversationMessages {
   pending_request_key: string | null
   /** 本进程里这个会话是否正有一轮在跑（流式输出尚未结束）；刷新后靠它认出"正在回复" */
   running: boolean
+  active_turn: { user_message: ChatMessage; assistant_text: string } | null
+  retrieval_status: RetrievalStatus
+  retrieved_sources: RetrievedSource[]
+  web_search_status: WebSearchStatus
+  web_sources: WebSource[]
+  run_error: string | null
 }
 
 /** 对齐后端 `schemas/conversations.py::RetrievedSourceOut` —— 本轮召回的候选片段 */
@@ -245,31 +244,6 @@ export interface RetrievedSource {
 export type MessageTurnStatus = 'completed' | 'waiting_approval'
 
 /**
- * 后端**还没提供**的字段（记在这里，等接口补上时前端照着接）。
- *
- * 场景：发送过程中刷新了页面 / 切走了会话。前端把连接掐了，但**服务端那一轮并没有停**，
- * 它会继续跑完，成功时把结果追加进 checkpoint，失败时什么也不写。
- *
- * 这期间服务端对同一会话的新消息一律回 409，但**历史接口读不出"正在跑"** ——
- * 它只从 checkpoint 里读 `pending_approval`，而"正在跑"是进程内存里的事
- * （`services/conversations.py::ConversationChat._running`）。
- *
- * 于是刷新之后页面会误以为这个会话是空闲的：输入框能打、能点发送，点下去才被 409 挡回来。
- * 界面表现是"点了发送没反应、过了一会儿冒出一句错误"，而不是"这个会话正在忙"。
- *
- * 要解决的话，后端在 `ConversationMessagesOut` 里加：
- *
- *     running: bool     # 本进程里这个会话是否正有一轮在跑
- *
- * 前端只需要在 `ConversationMessages` 里加对应字段、并在 `applyServerStatus` 里多认一个分支。
- * ⚠️ 注意这个字段**只对单进程成立**：多进程部署时 A 进程不知道 B 进程在跑，
- * 那时得换成"图状态里记一个 `running` 标记"才有意义。
- */
-export interface ConversationRunningStatus {
-  running: boolean
-}
-
-/**
  * 对齐后端 `schemas/conversations.py::MessageTurnOut` —— 一轮对话的增量返回。
  *
  * `messages` 里**包含本轮用户自己那条消息**：拿到之后整段接在消息列表尾部即可，
@@ -284,6 +258,8 @@ export interface MessageTurn {
   pending_request_key: string | null
   retrieval_status: RetrievalStatus
   retrieved_sources: RetrievedSource[]
+  web_search_status: WebSearchStatus
+  web_sources: WebSource[]
   /** 首轮后自动生成的标题；非首轮或生成失败时为 null */
   title?: string | null
 }
@@ -303,7 +279,7 @@ export interface ConversationTitlePayload {
 /**
  * 流式连接里收到的一帧。
  *
- * 后端只发这两种业务事件（`api/customer/conversations.py::stream_message`）：
+ * 后端的成功事件（错误事件在 API 层转成 ApiError）：
  * - `delta`：模型正在吐的一段字，逐帧追加到气泡里。
  * - `done`：本轮跑完，带的 `turn` 跟非流式接口返回的**是同一个结构**。
  *

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RETRIEVAL_STATUS_LABELS, labelOf } from '../../labels'
-import type { RetrievalStatus, RetrievedSource } from '../../types'
+import type { RetrievalStatus, RetrievedSource, WebSearchStatus, WebSource } from '../../types'
 
 /**
  * 本轮的检索依据 —— 属于"这一轮"，不混进消息列表里。
@@ -15,6 +15,8 @@ import type { RetrievalStatus, RetrievedSource } from '../../types'
 defineProps<{
   status: RetrievalStatus
   sources: RetrievedSource[]
+  webStatus: WebSearchStatus
+  webSources: WebSource[]
 }>()
 
 /** 配色按"这个状态意味着什么"选：蓝=有结果、黄=没等到、红=坏了。 */
@@ -48,6 +50,13 @@ function relevanceLabel(score: number | null): string {
   }
   return '相关度 低'
 }
+
+function sourceUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined
+  } catch { return undefined }
+}
 </script>
 
 <template>
@@ -65,6 +74,22 @@ function relevanceLabel(score: number | null): string {
         <span v-if="item.section" class="muted"> · {{ item.section }}</span>
         <span class="evidence__source">{{ item.source }}</span>
         <span v-if="item.score !== null" class="muted"> {{ relevanceLabel(item.score) }}</span>
+      </li>
+    </ol>
+
+    <p v-if="status === 'empty' || status === 'unavailable'" class="muted">
+      未成功检索到本地知识库资料{{ status === 'unavailable' ? '（检索服务暂不可用）' : '' }}。
+      <template v-if="webStatus === 'ready'">以下内容参考网上公开信息，请通过来源链接核对。</template>
+      <template v-else-if="webStatus === 'unavailable'">当前联网搜索不可用；模型的通用建议未经联网核实。</template>
+      <template v-else-if="webStatus === 'empty'">联网搜索也未找到可用资料；模型的通用建议未经联网核实。</template>
+    </p>
+    <ol v-if="webSources.length" class="evidence__list">
+      <li v-for="item in webSources" :key="item.url">
+        <a v-if="sourceUrl(item.url)" :href="sourceUrl(item.url)" target="_blank" rel="noopener noreferrer">
+          {{ item.title || item.url }}
+        </a>
+        <span v-else>{{ item.title }}</span>
+        <span class="evidence__source">网上公开信息</span>
       </li>
     </ol>
   </div>

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import SettingsConfigDict
 from supportflow.core.database import DatabaseSettings
 
@@ -34,6 +34,12 @@ class Settings(DatabaseSettings):
     # 是否在 RRF 融合之后再过一遍重排（融合只看名次，重排按语义）。
     # 关掉可省掉检索链路上唯一的外部依赖；rerank 自身失败时也会退回融合顺序。
     RETRIEVAL_RERANK: bool = True
+
+    # 本地知识库无结果或不可用时，搜索网上公开资料；不配置密钥则如实降级。
+    TAVILY_API_KEY: SecretStr = SecretStr("")
+    TAVILY_BASE_URL: str = "https://api.tavily.com"
+    WEB_SEARCH_MAX_RESULTS: int = Field(default=5, ge=1, le=10)
+    WEB_SEARCH_TIMEOUT_SECONDS: float = Field(default=15, gt=0, le=60)
 
     # LangSmith 为可选观测工具，全部给默认值：缺省也能启动/导入，不必强制配置。
     LANGSMITH_TRACING: bool = False

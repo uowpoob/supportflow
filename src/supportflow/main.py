@@ -22,7 +22,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.checkpointer = checkpointer
         app.state.support_graph = build_support_graph(checkpointer=checkpointer)
         app.state.conversation_chat = ConversationChat(app.state.support_graph)
-        yield
+        try:
+            yield
+        finally:
+            await app.state.conversation_chat.aclose()
 
 
 app = FastAPI(
