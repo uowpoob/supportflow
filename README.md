@@ -170,7 +170,7 @@ sequenceDiagram
 | 业务存储 | MySQL、SQLAlchemy、asyncmy、Alembic：认证、订单、退款、事务与迁移 |
 | 对话存储 | PostgreSQL、LangGraph Checkpointer、psycopg：消息历史与图状态 |
 | 本地检索 | Milvus、jieba、BM25、RRF：向量与关键词召回、排名融合 |
-| 向量与重排 | 百炼 `text-embedding-v4`、`gte-rerank-v2` |
+| 向量与重排 | 百炼 `text-embedding-v4`、`qwen3-rerank` |
 | 联网搜索 | Tavily、httpx：获取网页标题、链接与摘要 |
 | 文档与测试 | pypdf、python-docx、pytest、Node.js Test Runner |
 
@@ -227,7 +227,7 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_DIM=1024
 DASHSCOPE_NATIVE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
-RERANK_MODEL=gte-rerank-v2
+RERANK_MODEL=qwen3-rerank
 RETRIEVAL_RERANK=true
 
 MILVUS_URI=http://127.0.0.1:19530

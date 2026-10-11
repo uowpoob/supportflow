@@ -26,10 +26,9 @@ class Settings(DatabaseSettings):
     # 不能写 Literal[...]：环境变量读进来是字符串 "1024"，Literal 不做转换会校验失败，必须用 int + 校验器。
     EMBEDDING_DIM: int = 1024
 
-    # 重排走 DashScope 原生接口（非 OpenAI 兼容）。实测通用域名可直接调用，
-    # 文档里的 {WorkspaceId}.cn-beijing.maas 域名并非必需。
+    # 重排共用该服务地址；Qwen3 适配器转换为 /compatible-api/v1/reranks。
     DASHSCOPE_NATIVE_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
-    RERANK_MODEL: str = "gte-rerank-v2"
+    RERANK_MODEL: str = "qwen3-rerank"
 
     # 是否在 RRF 融合之后再过一遍重排（融合只看名次，重排按语义）。
     # 关掉可省掉检索链路上唯一的外部依赖；rerank 自身失败时也会退回融合顺序。

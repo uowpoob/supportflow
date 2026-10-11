@@ -12,7 +12,7 @@ import httpx
 
 from supportflow.retrieval.types import RetrievalUnavailable, RetrievedChunk
 
-# 重排走百炼原生接口，与向量用的 OpenAI 兼容模式不是同一套协议。
+# Qwen3 使用兼容 reranks 协议，GTE 等模型使用百炼原生协议。
 RERANK_PATH = "/services/rerank/text-rerank/text-rerank"
 RERANK_TIMEOUT = 30
 DEFAULT_TOP_N = 5
@@ -48,23 +48,34 @@ async def rerank_chunks(
         raise ValueError("待重排的片段缺少正文")
 
     texts = [_document_text(chunk) for chunk in chunks]
+    qwen_compatible = settings.RERANK_MODEL == "qwen3-rerank"
+    base_url = settings.DASHSCOPE_NATIVE_BASE_URL.rstrip("/")
+    if qwen_compatible:
+        url = base_url.removesuffix("/api/v1") + "/compatible-api/v1/reranks"
+        payload = {
+            "model": settings.RERANK_MODEL, "query": query, "documents": texts,
+            "top_n": min(top_n, len(texts)),
+        }
+    else:
+        url = base_url + RERANK_PATH
+        payload = {
+            "model": settings.RERANK_MODEL,
+            "input": {"query": query, "documents": texts},
+            "parameters": {"top_n": min(top_n, len(texts))},
+        }
     try:
         # trust_env=False：系统代理会截走本机对百炼的请求。
         async with httpx.AsyncClient(trust_env=False, timeout=RERANK_TIMEOUT) as client:
             response = await client.post(
-                settings.DASHSCOPE_NATIVE_BASE_URL + RERANK_PATH,
+                url,
                 headers={
                     "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY.get_secret_value()}",
                 },
-                json={
-                    "model": settings.RERANK_MODEL,
-                    "input": {"query": query, "documents": texts},
-                    # top_n 超过候选数会被接口直接拒掉。
-                    "parameters": {"top_n": min(top_n, len(texts))},
-                },
+                json=payload,
             )
             response.raise_for_status()
-            results = response.json()["output"]["results"]
+            data = response.json()
+            results = data["results"] if qwen_compatible else data["output"]["results"]
     except Exception as exc:
         # 不把 SDK 报错原文（可能带请求正文或连接信息）传给上层。
         raise RetrievalUnavailable(f"重排暂不可用（{type(exc).__name__}）") from exc
