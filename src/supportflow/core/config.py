@@ -34,6 +34,9 @@ class Settings(DatabaseSettings):
     # 关掉可省掉检索链路上唯一的外部依赖；rerank 自身失败时也会退回融合顺序。
     RETRIEVAL_RERANK: bool = True
 
+    # JSON 快照保存全部 BM25 统计；相对路径以项目根目录为基准。
+    BM25_INDEX_PATH: Path = PROJECT_ROOT / ".local" / "indexes" / "bm25.json"
+
     # 本地知识库无结果或不可用时，搜索网上公开资料；不配置密钥则如实降级。
     TAVILY_API_KEY: SecretStr = SecretStr("")
     TAVILY_BASE_URL: str = "https://api.tavily.com"

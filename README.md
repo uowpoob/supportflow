@@ -70,7 +70,7 @@ flowchart LR
 
 单路召回失败但另一路有结果时，仍然使用可用候选。重排失败时退回 RRF 融合顺序。有服务故障且没有候选时，状态为 `unavailable`；两路正常但都没有匹配时，状态为 `empty`。
 
-知识库从 `src/supportflow/retrieval/data/` 与 `src/supportflow/retrieval/policies/` 递归读取 Markdown、PDF、DOCX，按标题和条款切分，保留文档、片段、来源和章节等元信息。BM25 索引在后端进程中按需构建，向量索引保存在 Milvus。
+知识库从 `src/supportflow/retrieval/data/` 与 `src/supportflow/retrieval/policies/` 递归读取 Markdown、PDF、DOCX，按标题和条款切分，保留文档、片段、来源和章节等元信息。BM25 完整统计保存为本地 JSON 快照，后端启动时加载到内存，同时预热 jieba 词典；向量索引保存在 Milvus。
 
 ### 联网兜底
 
@@ -251,6 +251,7 @@ LANGGRAPH_PG_DSN=postgresql://langgraph_user:your_pg_password@127.0.0.1:5432/lan
 | `WEB_SEARCH_MAX_RESULTS` | 默认最多返回 5 条网页资料 |
 | `WEB_SEARCH_TIMEOUT_SECONDS` | 默认搜索请求超时为 15 秒 |
 | `RETRIEVAL_RERANK=false` | 关闭重排，使用 RRF 融合顺序 |
+| `BM25_INDEX_PATH` | BM25 快照路径，默认 `.local/indexes/bm25.json`；相对路径以项目根目录为基准 |
 
 修改 `.env` 后重启后端才能加载新配置。`.env` 已被 Git 忽略，不要提交真实密钥。
 
@@ -281,9 +282,16 @@ uv run python -m supportflow.retrieval.resource2chunks --dry-run
 
 # 生成向量并写入 Milvus，更新同 ID 片段，保留其他记录
 uv run python -m supportflow.retrieval.resource2chunks
+
+# 离线构建 BM25 快照，不调用模型或数据库
+uv run python -m supportflow.retrieval.retrieving.bm25 --build-index
 ```
 
-需要完整重建索引时可添加 `--replace`。该模式会在资料解析和向量生成成功后清空配置集合，再分批写入新资料；批次之间没有跨批次事务，失败后需重新运行。扫描 PDF 需先完成 OCR，修改资料后重启后端以更新 BM25 内存索引。
+需要完整重建向量索引时可添加 `--replace`。该模式会在资料解析和向量生成成功后清空配置集合，再分批写入新资料；批次之间没有跨批次事务，失败后需重新运行。扫描 PDF 需先完成 OCR。
+
+BM25 快照包含片段正文和 BM25 对象的完整统计状态。启动时快照存在就直接加载，不存在则首次构建并保存；随后在当前进程中缓存复用。首次部署可先运行离线构建命令，将构建工作放在服务启动之前。可用 `--index-path <路径>` 指定输出位置，服务需配置相同的 `BM25_INDEX_PATH`。
+
+修改资料或切分、分词规则后，先更新 Milvus，再离线重建 BM25 快照，最后重启后端加载新版本。快照不做自动过期检测或损坏恢复；读取失败会中止启动，重新运行离线构建命令即可覆盖快照。构建命令应在启动前执行；多个后端进程各自加载内存副本。
 
 ### 5. 启动后端
 

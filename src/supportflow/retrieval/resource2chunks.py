@@ -273,35 +273,4 @@ async def ingest_documents(directories: tuple[Path, ...] = DOCUMENT_DIRS, *,
         await asyncio.to_thread(client.close)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="将 policies/data 的 Markdown、PDF、DOCX 切分入库")
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--dry-run", action="store_true", help="只读取、切分，不调用模型或数据库")
-    mode.add_argument("--replace", action="store_true", help="向量化成功后清空知识集合，重新导入所有资料")
-    mode.add_argument("--clear-only", action="store_true", help="只清空配置的知识集合，保留集合结构")
-    parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE)
-    parser.add_argument("--chunk-overlap", type=int, default=CHUNK_OVERLAP)
-    args = parser.parse_args()
-    if args.clear_only:
-        from supportflow.retrieval.milvus import clear_chunks, init_milvus
-        client = init_milvus()
-        try:
-            print(f"已删除 {clear_chunks(client)} 条知识片段")
-        finally:
-            client.close()
-    elif args.dry_run:
-        documents = load_documents()
-        chunks = split_documents(documents, chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap)
-        formats = {suffix: sum(d.metadata["source"].lower().endswith(suffix) for d in documents)
-                   for suffix in sorted(SUPPORTED_SUFFIXES)}
-        print(json.dumps({"documents": len(documents), "chunks": len(chunks), "formats": formats,
-                          "categories": {category: sum(c.metadata["category"] == category for c in chunks)
-                                         for category in ("policies", "data")}}, ensure_ascii=False))
-    else:
-        summary = asyncio.run(ingest_documents(replace=args.replace, chunk_size=args.chunk_size,
-                                               chunk_overlap=args.chunk_overlap))
-        print(f"入库完成：{json.dumps(summary, ensure_ascii=False)}")
 
-
-if __name__ == "__main__":
-    main()

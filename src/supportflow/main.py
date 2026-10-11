@@ -1,5 +1,6 @@
 """SupportFlow HTTP entry point."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -8,16 +9,18 @@ from fastapi import FastAPI
 from supportflow.agents.checkpointer import open_checkpointer
 from supportflow.agents.graph.builder import build_support_graph
 from supportflow.api.router import api_router
+from supportflow.retrieval.retrieving.bm25 import warmup_bm25
 from supportflow.services.conversations import ConversationChat
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """服务启动时打开对话记忆，全进程共用一份；退出时关掉。
+    """启动时预热 BM25 并打开对话记忆，全进程共用；退出时关闭对话资源。
 
     放在这里而不是每个请求各自开一个：连数据库是要花时间的，每个请求都连一遍
     既慢又费连接。挂到 `app.state` 上，路由通过 `Request` 就能拿到。
     """
+    await asyncio.to_thread(warmup_bm25)
     async with open_checkpointer() as checkpointer:
         app.state.checkpointer = checkpointer
         app.state.support_graph = build_support_graph(checkpointer=checkpointer)
