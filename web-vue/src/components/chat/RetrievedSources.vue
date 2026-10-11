@@ -78,10 +78,13 @@ function sourceUrl(value: string): string | undefined {
     </ol>
 
     <p v-if="status === 'empty' || status === 'unavailable'" class="muted">
-      未成功检索到本地知识库资料{{ status === 'unavailable' ? '（检索服务暂不可用）' : '' }}。
+      本地知识库未找到足以回答问题的资料{{ status === 'unavailable' ? '（检索服务暂不可用）' : '' }}。
       <template v-if="webStatus === 'ready'">以下内容参考网上公开信息，请通过来源链接核对。</template>
       <template v-else-if="webStatus === 'unavailable'">当前联网搜索不可用；模型的通用建议未经联网核实。</template>
       <template v-else-if="webStatus === 'empty'">联网搜索也未找到可用资料；模型的通用建议未经联网核实。</template>
+    </p>
+    <p v-if="webStatus === 'ready' && webSources.length" class="muted">
+      网上信息可能不准确或已过时，请核对来源、发布日期和适用型号，优先以官方说明书或官方客服确认为准。
     </p>
     <ol v-if="webSources.length" class="evidence__list">
       <li v-for="item in webSources" :key="item.url">

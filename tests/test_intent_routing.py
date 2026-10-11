@@ -143,6 +143,7 @@ async def test_missing_question_clears_documents_without_retrieval(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["ready", "empty", "unavailable"])
 async def test_retrieval_node_updates_only_current_evidence(monkeypatch, outcome):
+    monkeypatch.setattr(nodes, "has_sufficient_knowledge", AsyncMock(return_value=True))
     document = {
         "document_id": "x1", "chunk_id": "x1#1", "title": "X1 使用指南",
         "source": "data/x1.md", "content": "长按开机键", "score": 0.8,

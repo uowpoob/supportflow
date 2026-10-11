@@ -16,6 +16,7 @@ from supportflow.agents.graph.state import SupportState, SupportStateUpdate
 from supportflow.agents.prompt.routing import ROUTING_SYSTEM_PROMPT
 from supportflow.agents.structured_output.node_output import UnderstandAndRouteOutput
 from supportflow.agents.tools.web_search import WebSearchUnavailable, search_web as web_search
+from supportflow.agents.tools.knowledge_check import has_sufficient_knowledge
 from supportflow.core.config import settings
 from supportflow.retrieval.retrieving.hybrid import retrieve_hybrid as retrieve
 from supportflow.retrieval.types import RetrievalUnavailable
@@ -112,6 +113,9 @@ async def retrieve_knowledge(
     except RetrievalUnavailable as exc:
         logger.warning("%s", exc)
         update["retrieval_status"] = "unavailable"
+        return update
+    if documents and not await has_sufficient_knowledge(question, documents):
+        # 不把未通过审核的候选继续交给回答模型，避免混入无关依据。
         return update
     update["retrieved_documents"] = documents
     update["retrieval_status"] = "ready" if documents else "empty"

@@ -26,6 +26,9 @@ def corpus(tmp_path, monkeypatch):
     )
     loader = Mock(side_effect=lambda: load_documents((data, policies)))
     monkeypatch.setattr(bm25, "load_documents", loader)
+    # 快照隔离到测试目录，避免读写项目实际索引。
+    from supportflow.core.config import settings
+    monkeypatch.setattr(settings, "BM25_INDEX_PATH", tmp_path / "bm25.json")
     bm25.clear_index_cache()
     yield data, policies, loader
     bm25.clear_index_cache()
@@ -94,6 +97,7 @@ async def test_index_is_cached_and_can_be_reloaded_without_leaking_mutations(cor
     assert "USB-C" in (await bm25.retrieve_bm25("A2666"))[0]["content"]
     assert loader.call_count == 1
     (data / "charger.md").write_text("# 新充电器\n\n新型号 A9999。", encoding="utf-8")
+    bm25.build_index_snapshot()
     bm25.clear_index_cache()
     assert await bm25.retrieve_bm25("A2666") == []
     assert (await bm25.retrieve_bm25("A9999"))[0]["chunk_id"] == "data/charger.md#overview"
